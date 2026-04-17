@@ -1,0 +1,18 @@
+[Unit]
+Description=wg-friend managed WireGuard interface %I via BoringTun
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/wg-friend
+ExecStartPre=/usr/local/bin/wg-friend internal preflight --interface %I
+ExecStart=/usr/bin/boringtun-cli -f --disable-drop-privileges %I
+ExecStartPost=/usr/local/bin/wg-friend internal configure --interface %I
+ExecStartPost=/usr/local/bin/wg-friend internal verify --interface %I
+ExecStopPost=/usr/local/bin/wg-friend internal cleanup --interface %I
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

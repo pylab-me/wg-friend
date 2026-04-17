@@ -1,0 +1,10 @@
+[package]
+name = "wg-friend"
+version = "0.2.0"
+edition = "2021"
+description = "Semantic WireGuard/BoringTun lifecycle and client management helper"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

@@ -1,0 +1,8 @@
+# 常见的 rustfmt.toml 配置示例
+max_width = 100               # 每行最大宽度（默认 100）
+hard_tabs = false             # 是否使用 Tab 缩进
+merge_derives = true          # 是否合并 #[derive(A, B)]
+
+#imports_granularity = "Module" # 合并导入路径
+imports_granularity = "Item"  # LLM, AI最友好
+group_imports = "StdExternalCrate" # 强制开启全局合并排序
