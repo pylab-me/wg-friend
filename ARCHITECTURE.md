@@ -1,4 +1,4 @@
-# wg-friend v0.3.0 Architecture
+# wg-friend v0.3.x Architecture
 
 ## Positioning
 

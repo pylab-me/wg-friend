@@ -174,11 +174,10 @@ pub fn status_badge(text: &str) -> String {
     let normalized = text.trim().to_ascii_lowercase();
     let tone = match normalized.as_str() {
         "active" | "enabled" | "up" | "running" | "ready" | "ok" | "yes" | "present"
-        | "started" | "restarted" => Tone::Good,
-        "inactive" | "disabled" | "down" | "failed" | "error" | "no" | "missing" | "stopped" => {
-            Tone::Bad
-        }
-        "unknown" | "degraded" | "partial" | "warning" => Tone::Warn,
+        | "started" | "restarted" | "online" => Tone::Good,
+        "inactive" | "disabled" | "down" | "failed" | "error" | "no" | "missing" | "stopped"
+        | "offline" => Tone::Bad,
+        "unknown" | "degraded" | "partial" | "warning" | "probing" | "stale" => Tone::Warn,
         _ => Tone::Info,
     };
     badge(text, tone)

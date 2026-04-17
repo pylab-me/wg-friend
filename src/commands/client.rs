@@ -33,6 +33,7 @@ use crate::util::ensure_paths;
 use crate::util::safe_capture;
 use crate::wireguard::render_client_config;
 use crate::wireguard::InterfaceData;
+use crate::wireguard::PeerConnectivityState;
 use crate::wireguard::WgRuntimeSummary;
 
 #[derive(Clone, Debug)]
@@ -565,25 +566,24 @@ fn build_client_views(
         let runtime_peer =
             runtime.and_then(|summary| summary.peer_by_public_key(&state.public_key));
         let (rx, tx, remote_ip, last_seen, item_state) = match runtime_peer {
-            Some(item) => (
-                item.rx_bytes_text(),
-                item.tx_bytes_text(),
-                item.endpoint
-                    .clone()
-                    .unwrap_or_else(|| "(none)".to_string()),
-                item.last_seen_text(),
-                if item.endpoint.is_some() {
-                    "online".to_string()
-                } else {
-                    "offline".to_string()
-                },
-            ),
+            Some(item) => {
+                let state = item.connectivity_state();
+                (
+                    item.rx_bytes_text(),
+                    item.tx_bytes_text(),
+                    item.endpoint
+                        .clone()
+                        .unwrap_or_else(|| "(none)".to_string()),
+                    item.last_seen_text(),
+                    state.as_str().to_string(),
+                )
+            }
             None => (
                 "0B".to_string(),
                 "0B".to_string(),
                 "(none)".to_string(),
                 "(not yet)".to_string(),
-                "offline".to_string(),
+                PeerConnectivityState::Offline.as_str().to_string(),
             ),
         };
 

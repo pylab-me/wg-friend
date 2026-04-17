@@ -44,6 +44,25 @@ pub struct WgRuntimePeer {
     pub persistent_keepalive: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeerConnectivityState {
+    Offline,
+    Probing,
+    Stale,
+    Online,
+}
+
+impl PeerConnectivityState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Offline => "offline",
+            Self::Probing => "probing",
+            Self::Stale => "stale",
+            Self::Online => "online",
+        }
+    }
+}
+
 impl InterfaceData {
     pub fn parse(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
@@ -375,11 +394,26 @@ impl WgRuntimePeer {
         self.transfer_parts().1
     }
 
+    pub fn handshake_age_secs(&self) -> Option<u64> {
+        self.handshake_observation().age_secs
+    }
+
     pub fn last_seen_text(&self) -> String {
-        match self.latest_handshake.as_deref() {
-            Some(value) if !value.eq_ignore_ascii_case("never") => value.to_string(),
-            _ => "(not yet)".to_string(),
+        self.handshake_observation().display_text
+    }
+
+    pub fn connectivity_state(&self) -> PeerConnectivityState {
+        let observation = self.handshake_observation();
+        match observation.age_secs {
+            Some(age) if age <= 180 => PeerConnectivityState::Online,
+            Some(_) => PeerConnectivityState::Stale,
+            None if self.endpoint.is_some() => PeerConnectivityState::Probing,
+            None => PeerConnectivityState::Offline,
         }
+    }
+
+    fn handshake_observation(&self) -> HandshakeObservation {
+        parse_handshake_observation(self.latest_handshake.as_deref())
     }
 
     pub fn transfer_parts(&self) -> (String, String) {
@@ -402,6 +436,86 @@ impl WgRuntimePeer {
                 .to_string(),
         )
     }
+}
+
+#[derive(Clone, Debug)]
+struct HandshakeObservation {
+    age_secs: Option<u64>,
+    display_text: String,
+}
+
+fn parse_handshake_observation(raw: Option<&str>) -> HandshakeObservation {
+    let Some(raw) = raw.map(str::trim) else {
+        return HandshakeObservation {
+            age_secs: None,
+            display_text: "(not yet)".to_string(),
+        };
+    };
+
+    match parse_handshake_age_secs(raw) {
+        Some(age_secs) => HandshakeObservation {
+            age_secs: Some(age_secs),
+            display_text: raw.to_string(),
+        },
+        None => HandshakeObservation {
+            age_secs: None,
+            display_text: "(not yet)".to_string(),
+        },
+    }
+}
+
+fn parse_handshake_age_secs(raw: &str) -> Option<u64> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty()
+        || normalized == "never"
+        || normalized == "(not yet)"
+        || normalized == "0"
+        || normalized.contains("not yet")
+        || normalized.contains("year")
+        || normalized.contains("1970")
+        || normalized.contains("epoch")
+    {
+        return None;
+    }
+    if normalized == "now" || normalized == "just now" {
+        return Some(0);
+    }
+
+    let compact = normalized.strip_suffix(" ago").unwrap_or(&normalized);
+    let mut total_secs = 0u64;
+    let mut parsed_any = false;
+
+    for part in compact.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut pieces = trimmed.split_whitespace();
+        let number_text = pieces.next()?;
+        let number = number_text.parse::<u64>().ok()?;
+        let unit = pieces.next()?;
+
+        let unit_secs = if unit.starts_with("second") {
+            1
+        } else if unit.starts_with("minute") {
+            60
+        } else if unit.starts_with("hour") {
+            60 * 60
+        } else if unit.starts_with("day") {
+            24 * 60 * 60
+        } else if unit.starts_with("week") {
+            7 * 24 * 60 * 60
+        } else if unit.starts_with("month") {
+            30 * 24 * 60 * 60
+        } else {
+            return None;
+        };
+
+        parsed_any = true;
+        total_secs = total_secs.saturating_add(number.saturating_mul(unit_secs));
+    }
+
+    parsed_any.then_some(total_secs)
 }
 
 pub fn render_client_config(
