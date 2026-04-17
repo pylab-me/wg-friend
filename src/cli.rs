@@ -6,30 +6,31 @@ use clap::Subcommand;
 #[derive(Parser, Debug)]
 #[command(name = "wg-friend")]
 #[command(version)]
+#[command(author = "Ricky <mail.me@pylab.me>")]
 #[command(about = "Semantic WireGuard/BoringTun lifecycle and client helper")]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Manage WireGuard server instances.
+    /// Manage semantic WireGuard/BoringTun server lifecycle.
     Server {
         #[command(subcommand)]
         command: ServerCommands,
     },
-    /// Manage local client peers and exported client configs.
+    /// Manage clients, adopted peers, exports, and runtime identity.
     Client {
         #[command(subcommand)]
         command: ClientCommands,
     },
-    /// Manage the systemd integration.
+    /// Manage systemd integration for wg-friend instances.
     Service {
         #[command(subcommand)]
         command: ServiceCommands,
     },
-    /// Validate and diagnose local bring-up.
+    /// Run production-friendly diagnostics for service, interface, and WireGuard runtime state.
     Doctor {
         #[command(subcommand)]
         command: DoctorCommands,
@@ -62,9 +63,9 @@ pub enum ServerCommands {
 
 #[derive(Subcommand, Debug)]
 pub enum ClientCommands {
-    /// List managed clients for a server.
+    /// List clients in a PiVPN-like runtime view.
     List { interface: Option<String> },
-    /// Show one managed client.
+    /// Show one client with config and runtime details.
     Show {
         interface: Option<String>,
         name: Option<String>,
@@ -79,6 +80,18 @@ pub enum ClientCommands {
         dns: Option<String>,
         #[arg(long)]
         endpoint: Option<String>,
+    },
+    /// Adopt an existing peer into the wg-friend managed client model.
+    Adopt {
+        interface: Option<String>,
+        public_key: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Render an exported client config as a terminal QR code.
+    Qrcode {
+        interface: Option<String>,
+        name: Option<String>,
     },
     /// Remove a managed client peer and delete its exported config.
     Remove {

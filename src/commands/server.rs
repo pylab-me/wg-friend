@@ -261,7 +261,7 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
         let name = config_data
             .as_ref()
             .and_then(|data| data.managed_name_by_public_key(&peer.public_key))
-            .unwrap_or_else(|| "-".to_string());
+            .unwrap_or_else(|| format!("legacy:{}", ui::truncate_middle(&peer.public_key, 8)));
         table.push_row(vec![
             name,
             ui::truncate_middle(&peer.public_key, 18),

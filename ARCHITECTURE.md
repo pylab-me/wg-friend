@@ -1,4 +1,4 @@
-# wg-friend v0.2.0 Architecture
+# wg-friend v0.3.0 Architecture
 
 ## Positioning
 
@@ -7,7 +7,7 @@
 - user-oriented CLI verbs
 - systemd-owned long-running process supervision
 - explicit bring-up phases
-- local client management that can later be extended toward Cloudflare-backed distribution
+- semantic client management, peer adoption, and exported QR-friendly configs that can later be extended toward Cloudflare-backed distribution
 
 ## Public command model
 

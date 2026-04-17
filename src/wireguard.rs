@@ -175,6 +175,25 @@ impl InterfaceData {
             .find(|peer| peer.managed_name.as_deref() == Some(name))
     }
 
+    pub fn peer_by_public_key(&self, public_key: &str) -> Option<&PeerEntry> {
+        self.peers
+            .iter()
+            .find(|peer| peer.public_key() == Some(public_key))
+    }
+
+    pub fn peer_by_public_key_mut(&mut self, public_key: &str) -> Option<&mut PeerEntry> {
+        self.peers
+            .iter_mut()
+            .find(|peer| peer.public_key() == Some(public_key))
+    }
+
+    pub fn unmanaged_peers(&self) -> Vec<&PeerEntry> {
+        self.peers
+            .iter()
+            .filter(|peer| peer.managed_name.is_none())
+            .collect::<Vec<_>>()
+    }
+
     pub fn add_managed_peer(
         &mut self,
         name: &str,
@@ -192,6 +211,20 @@ impl InterfaceData {
             managed_name: Some(name.to_string()),
             values,
         });
+    }
+
+    pub fn adopt_peer(&mut self, public_key: &str, name: &str) -> Result<()> {
+        if self.managed_peer(name).is_some() {
+            bail!("managed client already exists: {name}")
+        }
+        let Some(peer) = self.peer_by_public_key_mut(public_key) else {
+            bail!("peer not found for public key: {public_key}")
+        };
+        if peer.managed_name.is_some() {
+            bail!("peer is already managed")
+        }
+        peer.managed_name = Some(name.to_string());
+        Ok(())
     }
 
     pub fn remove_managed_peer(&mut self, name: &str) -> bool {
@@ -257,6 +290,17 @@ impl PeerEntry {
             .get("AllowedIPs")
             .and_then(|value| base_ip_from_cidr(value))
     }
+
+    pub fn public_key(&self) -> Option<&str> {
+        self.values.get("PublicKey").map(|value| value.as_str())
+    }
+
+    pub fn allowed_ips(&self) -> String {
+        self.values
+            .get("AllowedIPs")
+            .cloned()
+            .unwrap_or_else(|| "-".to_string())
+    }
 }
 
 impl WgRuntimeSummary {
@@ -315,6 +359,48 @@ impl WgRuntimeSummary {
         }
 
         summary
+    }
+
+    pub fn peer_by_public_key(&self, public_key: &str) -> Option<&WgRuntimePeer> {
+        self.peers.iter().find(|peer| peer.public_key == public_key)
+    }
+}
+
+impl WgRuntimePeer {
+    pub fn rx_bytes_text(&self) -> String {
+        self.transfer_parts().0
+    }
+
+    pub fn tx_bytes_text(&self) -> String {
+        self.transfer_parts().1
+    }
+
+    pub fn last_seen_text(&self) -> String {
+        match self.latest_handshake.as_deref() {
+            Some(value) if !value.eq_ignore_ascii_case("never") => value.to_string(),
+            _ => "(not yet)".to_string(),
+        }
+    }
+
+    pub fn transfer_parts(&self) -> (String, String) {
+        let Some(raw) = self.transfer.as_deref() else {
+            return ("0B".to_string(), "0B".to_string());
+        };
+
+        let mut parts = raw.split(',');
+        let received = parts.next().unwrap_or("0B").trim();
+        let sent = parts.next().unwrap_or("0B").trim();
+        (
+            received
+                .strip_suffix(" received")
+                .unwrap_or(received)
+                .trim()
+                .to_string(),
+            sent.strip_suffix(" sent")
+                .unwrap_or(sent)
+                .trim()
+                .to_string(),
+        )
     }
 }
 

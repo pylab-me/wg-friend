@@ -1,18 +1,18 @@
 # wg-friend
 
-`wg-friend` is a semantic CLI companion for WireGuard and BoringTun.
+**Semantic WireGuard/BoringTun lifecycle and client helper**
 
-This version hard-cuts the CLI into four public command groups:
+`wg-friend` is a modern management plane for WireGuard and BoringTun.
 
-- `server`
-- `client`
-- `service`
-- `doctor`
+Rather than mirroring the legacy `wg-quick` workflow, it introduces a semantic operating model centered on lifecycle control, client identity, diagnostics, and production-grade ergonomics. Existing WireGuard peers and configurations can be **adopted** into the `wg-friend` domain, allowing historical deployments to evolve into a cleaner and more manageable system without disruptive rewrites.
 
-It keeps the same architectural stance as v0.1:
+## Core ideas
 
-- **systemd** supervises the long-running `boringtun-cli -f` process
-- **wg-friend** performs validation, configuration, verification, cleanup, diagnosis, and local client management
+- Semantic lifecycle over shell-centric orchestration
+- Client-aware management over raw peer-only views
+- Production-friendly diagnostics over opaque output
+- systemd-native supervision for predictable operations
+- Safe adoption of legacy WireGuard peers into a modern control model
 
 ## Command surface
 
@@ -34,6 +34,8 @@ wg-friend server edit [iface]
 wg-friend client list [iface]
 wg-friend client show [iface] [name]
 wg-friend client add [iface] [name] [--address ...] [--dns ...] [--endpoint ...]
+wg-friend client adopt [iface] [public_key] [--name ...]
+wg-friend client qrcode [iface] [name]
 wg-friend client remove [iface] [name]
 wg-friend client export [iface] [name] [--output ...]
 ```
@@ -42,6 +44,7 @@ wg-friend client export [iface] [name] [--output ...]
 
 ```text
 wg-friend service install
+wg-friend service uninstall [iface] [--yes]
 wg-friend service status [iface]
 wg-friend service enable [iface]
 wg-friend service disable [iface]
@@ -54,38 +57,14 @@ wg-friend doctor check [iface]
 wg-friend doctor run [iface]
 ```
 
-## UX direction
+## Client model
 
-This version does **not** add a TUI.
-Instead it uses:
+`wg-friend` separates two concepts clearly:
 
-- short semantic commands
-- string-based prompts when arguments are missing
-- simple confirmation steps before destructive writes
+1. **runtime peers** visible through `wg show`
+2. **managed clients** that belong to the `wg-friend` domain
 
-This keeps the CLI easy to use over SSH while leaving room for future API or Cloudflare-backed client distribution.
-
-
-## Output formatter
-
-This revision adds a lightweight string formatter layer instead of a TUI:
-
-- aligned key/value sections
-- section dividers
-- simple tables for lists and peer views
-- ANSI color badges when stdout is a TTY
-- plain output automatically when redirected or piped
-
-The goal is to make `server status`, `client list`, and `doctor` feel like one coherent CLI instead of raw command dumps.
-
-## Local client management model
-
-Managed clients are tracked in two places:
-
-1. peer blocks are written back into `/etc/wireguard/<iface>.conf`
-2. exported client configs are stored under `/etc/wireguard/clients/<iface>/<name>.conf`
-
-Managed peer blocks are marked like this:
+Managed clients are tracked by a semantic marker in `/etc/wireguard/<iface>.conf`:
 
 ```text
 # wg-friend-client: alice
@@ -96,7 +75,26 @@ PresharedKey = ...
 PersistentKeepalive = 25
 ```
 
-This gives `wg-friend` a stable way to list, show, remove, and export its own managed clients without pretending it owns every peer in the file.
+This keeps the model explicit while still allowing legacy peer sets to be brought forward through adoption.
+
+## client adopt
+
+`wg-friend client adopt` brings existing WireGuard peers into the `wg-friend` client model.
+
+Instead of forcing a destructive rebuild, it lets legacy peers be named, classified, and managed under a semantic control plane. This is the bridge between historical WireGuard state and a cleaner modern operating model.
+
+## Output and UX
+
+This project deliberately avoids a TUI.
+Instead it uses:
+
+- short semantic commands
+- string-based prompts when arguments are missing
+- aligned formatter output with section dividers and tables
+- terminal colors when stdout is a TTY
+- plain text when redirected or piped
+
+Running `wg-friend` without arguments prints a compact identity banner with the project tagline and author line.
 
 ## Quick start
 
@@ -109,8 +107,9 @@ sudo wg-friend service install
 sudo wg-friend service enable wg0
 sudo wg-friend doctor check wg0
 sudo wg-friend server up wg0
-sudo wg-friend client add wg0 alice
-sudo wg-friend client export wg0 alice --output ./alice.conf
+sudo wg-friend client list wg0
+sudo wg-friend client adopt wg0
+sudo wg-friend client qrcode wg0 alice
 ```
 
 ## Notes
@@ -120,10 +119,7 @@ sudo wg-friend client export wg0 alice --output ./alice.conf
 - assumes WireGuard configs live under `/etc/wireguard`
 - this repository was prepared in an environment without a Rust toolchain, so run local formatting and compile checks before deploying
 
+---
 
-## v0.2.3 notes
-
-- `internal verify` now treats interface admin-up via link flags instead of requiring `state UP`, which avoids false failures on WireGuard interfaces that show `state UNKNOWN`.
-- `service install` now prints the resolved executable path in follow-up commands.
-- `service uninstall` removes the systemd template and can also remove generated client files and the wg-friend log.
-- `service up/down/restart` remain unsupported; the CLI now prints a direct hint to use `server up/down/restart`.
+**Author**  
+Ricky · mail.me@pylab.me

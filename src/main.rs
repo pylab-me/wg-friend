@@ -19,6 +19,8 @@ use crate::cli::InternalCommands;
 use crate::cli::ServerCommands;
 use crate::cli::ServiceCommands;
 use crate::config::AppConfig;
+use crate::ui::kv;
+use crate::ui::Tone;
 
 fn main() {
     if let Some(code) = maybe_handle_boundary_hint() {
@@ -32,10 +34,20 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    if std::env::args_os().len() == 1 {
+        print_overview();
+        return Ok(());
+    }
+
     let cli = Cli::parse();
     let app = AppConfig::from_env();
 
-    match cli.command {
+    let Some(command) = cli.command else {
+        print_overview();
+        return Ok(());
+    };
+
+    match command {
         Commands::Server { command } => match command {
             ServerCommands::List => commands::server::list(&app),
             ServerCommands::Show { interface } => commands::server::show(&app, interface),
@@ -57,6 +69,14 @@ fn run() -> Result<()> {
                 dns,
                 endpoint,
             } => commands::client::add(&app, interface, name, address, dns, endpoint),
+            ClientCommands::Adopt {
+                interface,
+                public_key,
+                name,
+            } => commands::client::adopt(&app, interface, public_key, name),
+            ClientCommands::Qrcode { interface, name } => {
+                commands::client::qrcode(&app, interface, name)
+            }
             ClientCommands::Remove { interface, name } => {
                 commands::client::remove(&app, interface, name)
             }
@@ -101,6 +121,19 @@ fn run() -> Result<()> {
             InternalCommands::Cleanup { interface } => commands::internal::cleanup(&app, interface),
         },
     }
+}
+
+fn print_overview() {
+    ui::print_section("wg-friend");
+    ui::print_message(
+        "Semantic WireGuard/BoringTun lifecycle and client helper",
+        Tone::Accent,
+    );
+    ui::print_kv_rows(&[
+        kv("author", "Ricky <mail.me@pylab.me>"),
+        kv("focus", "semantic lifecycle, client adoption, diagnostics"),
+        kv("help", "wg-friend --help"),
+    ]);
 }
 
 fn maybe_handle_boundary_hint() -> Option<i32> {
