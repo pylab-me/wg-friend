@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub default_interface: String,
     pub boringtun_bin: PathBuf,
     pub conf_dir: PathBuf,
+    pub state_dir: PathBuf,
     pub wg_run_dir: PathBuf,
     pub log_file: PathBuf,
     pub env_file: PathBuf,
@@ -40,6 +41,9 @@ impl AppConfig {
             ),
             conf_dir: PathBuf::from(
                 env::var("WG_FRIEND_CONF_DIR").unwrap_or_else(|_| "/etc/wireguard".to_string()),
+            ),
+            state_dir: PathBuf::from(
+                env::var("WG_FRIEND_STATE_DIR").unwrap_or_else(|_| "/etc/wg-friend".to_string()),
             ),
             wg_run_dir: PathBuf::from(
                 env::var("WG_FRIEND_WG_RUN_DIR").unwrap_or_else(|_| "/run/wireguard".to_string()),
@@ -88,11 +92,42 @@ impl AppConfig {
         format!("{}@{}.service", self.systemd_unit_prefix, interface)
     }
 
-    pub fn client_file_path(&self, interface: &str, name: &str) -> PathBuf {
+    pub fn legacy_client_file_path(&self, interface: &str, name: &str) -> PathBuf {
         self.conf_dir
             .join(&self.client_subdir_name)
             .join(interface)
             .join(format!("{name}.conf"))
+    }
+
+    pub fn instance_state_dir(&self, interface: &str) -> PathBuf {
+        self.state_dir.join("instances").join(interface)
+    }
+
+    pub fn instance_clients_dir(&self, interface: &str) -> PathBuf {
+        self.instance_state_dir(interface).join("clients")
+    }
+
+    pub fn instance_exports_dir(&self, interface: &str) -> PathBuf {
+        self.instance_state_dir(interface).join("exports")
+    }
+
+    pub fn state_server_path(&self, interface: &str) -> PathBuf {
+        self.instance_state_dir(interface).join("server.toml")
+    }
+
+    pub fn state_client_meta_path(&self, interface: &str, name: &str) -> PathBuf {
+        self.instance_clients_dir(interface)
+            .join(format!("{name}.toml"))
+    }
+
+    pub fn state_export_path(&self, interface: &str, name: &str) -> PathBuf {
+        self.instance_exports_dir(interface)
+            .join(format!("{name}.conf"))
+    }
+
+    pub fn state_import_report_path(&self, interface: &str) -> PathBuf {
+        self.instance_state_dir(interface)
+            .join("import-report.json")
     }
 
     pub fn discover_interfaces(&self) -> Vec<String> {

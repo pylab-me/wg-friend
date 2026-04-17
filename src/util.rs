@@ -86,6 +86,24 @@ pub fn ensure_paths(app: &AppConfig, iface: &InterfaceConfig) -> Result<()> {
         .with_context(|| format!("failed to create {}", app.wg_run_dir.display()))?;
     fs::create_dir_all(&iface.client_dir)
         .with_context(|| format!("failed to create {}", iface.client_dir.display()))?;
+    fs::create_dir_all(app.instance_state_dir(&iface.interface)).with_context(|| {
+        format!(
+            "failed to create {}",
+            app.instance_state_dir(&iface.interface).display()
+        )
+    })?;
+    fs::create_dir_all(app.instance_clients_dir(&iface.interface)).with_context(|| {
+        format!(
+            "failed to create {}",
+            app.instance_clients_dir(&iface.interface).display()
+        )
+    })?;
+    fs::create_dir_all(app.instance_exports_dir(&iface.interface)).with_context(|| {
+        format!(
+            "failed to create {}",
+            app.instance_exports_dir(&iface.interface).display()
+        )
+    })?;
 
     if !app.log_file.exists() {
         fs::write(&app.log_file, "")

@@ -3,6 +3,7 @@ mod command_runner;
 mod commands;
 mod config;
 mod prompt;
+mod state;
 mod systemd;
 mod ui;
 mod util;
@@ -69,11 +70,7 @@ fn run() -> Result<()> {
                 dns,
                 endpoint,
             } => commands::client::add(&app, interface, name, address, dns, endpoint),
-            ClientCommands::Adopt {
-                interface,
-                public_key,
-                name,
-            } => commands::client::adopt(&app, interface, public_key, name),
+            ClientCommands::Import { interface } => commands::client::import(&app, interface),
             ClientCommands::Qrcode { interface, name } => {
                 commands::client::qrcode(&app, interface, name)
             }
@@ -131,7 +128,10 @@ fn print_overview() {
     );
     ui::print_kv_rows(&[
         kv("author", "Ricky <mail.me@pylab.me>"),
-        kv("focus", "semantic lifecycle, client adoption, diagnostics"),
+        kv(
+            "focus",
+            "semantic lifecycle, complete-client import, diagnostics",
+        ),
         kv("help", "wg-friend --help"),
     ]);
 }

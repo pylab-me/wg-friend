@@ -20,7 +20,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: ServerCommands,
     },
-    /// Manage clients, adopted peers, exports, and runtime identity.
+    /// Manage complete clients, canonical exports, and runtime identity.
     Client {
         #[command(subcommand)]
         command: ClientCommands,
@@ -70,7 +70,7 @@ pub enum ClientCommands {
         interface: Option<String>,
         name: Option<String>,
     },
-    /// Add a managed client peer and export a local client config.
+    /// Add a managed_complete client and write canonical state + export.
     Add {
         interface: Option<String>,
         name: Option<String>,
@@ -81,13 +81,8 @@ pub enum ClientCommands {
         #[arg(long)]
         endpoint: Option<String>,
     },
-    /// Adopt an existing peer into the wg-friend managed client model.
-    Adopt {
-        interface: Option<String>,
-        public_key: Option<String>,
-        #[arg(long)]
-        name: Option<String>,
-    },
+    /// Import complete local client assets into canonical wg-friend state.
+    Import { interface: Option<String> },
     /// Render an exported client config as a terminal QR code.
     Qrcode {
         interface: Option<String>,

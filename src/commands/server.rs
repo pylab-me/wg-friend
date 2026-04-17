@@ -8,6 +8,8 @@ use crate::config::InterfaceConfig;
 use crate::prompt::ask_text;
 use crate::prompt::ask_yes_no;
 use crate::prompt::select_one;
+use crate::state::discover_client_states;
+use crate::state::save_server_state;
 use crate::systemd;
 use crate::ui::kv;
 use crate::ui::Table;
@@ -43,8 +45,8 @@ pub fn list(app: &AppConfig) -> Result<()> {
     ]);
     for item in items {
         let iface = app.resolve_interface(Some(item.clone()));
-        let client_count = InterfaceData::parse(&iface.conf_file)
-            .map(|data| data.managed_clients().len().to_string())
+        let client_count = discover_client_states(app, &item)
+            .map(|items| items.len().to_string())
             .unwrap_or_else(|_| "?".to_string());
         table.push_row(vec![
             item,
@@ -62,6 +64,7 @@ pub fn show(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let data = InterfaceData::parse(&iface.conf_file)?;
 
     ui::print_section("server");
+    let canonical_clients = discover_client_states(app, &iface.interface).unwrap_or_default();
     ui::print_kv_rows(&vec![
         kv("interface", iface.interface.clone()),
         kv("config", iface.conf_file.display().to_string()),
@@ -80,33 +83,30 @@ pub fn show(app: &AppConfig, interface: Option<String>) -> Result<()> {
             "mtu",
             data.interface_value("MTU").unwrap_or("<unset>").to_string(),
         ),
-        kv("managed_clients", data.managed_clients().len().to_string()),
+        kv("managed_complete", canonical_clients.len().to_string()),
+        kv(
+            "state_dir",
+            app.instance_state_dir(&iface.interface)
+                .display()
+                .to_string(),
+        ),
     ]);
 
-    if !data.managed_clients().is_empty() {
-        ui::print_section("managed clients");
+    if !canonical_clients.is_empty() {
+        ui::print_section("managed_complete clients");
         let mut table = Table::new(vec![
             "name".to_string(),
-            "allowed_ips".to_string(),
+            "address".to_string(),
             "public_key".to_string(),
+            "source".to_string(),
         ]);
-        for name in data.managed_clients() {
-            if let Some(peer) = data.managed_peer(&name) {
-                table.push_row(vec![
-                    name,
-                    peer.values
-                        .get("AllowedIPs")
-                        .cloned()
-                        .unwrap_or_else(|| "-".to_string()),
-                    ui::truncate_middle(
-                        peer.values
-                            .get("PublicKey")
-                            .map(String::as_str)
-                            .unwrap_or("-"),
-                        20,
-                    ),
-                ]);
-            }
+        for client in canonical_clients {
+            table.push_row(vec![
+                client.name,
+                client.address,
+                ui::truncate_middle(&client.public_key, 20),
+                client.source,
+            ]);
         }
         ui::print_table(&table);
     }
@@ -225,6 +225,8 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
 
     let runtime = WgRuntimeSummary::parse(&wg_raw);
     let config_data = InterfaceData::parse(&iface.conf_file).ok();
+    let canonical_names =
+        crate::commands::client::canonical_name_map(app, &iface.interface).unwrap_or_default();
     ui::print_kv_rows(&vec![
         kv(
             "interface",
@@ -258,9 +260,14 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
         "handshake".to_string(),
     ]);
     for peer in runtime.peers {
-        let name = config_data
-            .as_ref()
-            .and_then(|data| data.managed_name_by_public_key(&peer.public_key))
+        let name = canonical_names
+            .get(&peer.public_key)
+            .cloned()
+            .or_else(|| {
+                config_data
+                    .as_ref()
+                    .and_then(|data| data.managed_name_by_public_key(&peer.public_key))
+            })
             .unwrap_or_else(|| format!("legacy:{}", ui::truncate_middle(&peer.public_key, 8)));
         table.push_row(vec![
             name,
@@ -318,6 +325,7 @@ pub fn edit(app: &AppConfig, interface: Option<String>) -> Result<()> {
     data.set_interface_value("MTU", next_mtu);
     data.set_interface_value("ListenPort", next_port);
     data.write_to(&iface.conf_file)?;
+    save_server_state(app, &iface.interface, &data)?;
 
     ui::print_message(&format!("Saved {}.", iface.conf_file.display()), Tone::Good);
     Ok(())

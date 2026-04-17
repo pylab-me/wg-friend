@@ -56,6 +56,7 @@ WantedBy=multi-user.target
                 "WG_FRIEND_BORINGTUN_BIN={}\n",
                 "WG_FRIEND_CONF_DIR={}\n",
                 "WG_FRIEND_WG_RUN_DIR={}\n",
+                "WG_FRIEND_STATE_DIR={}\n",
                 "WG_FRIEND_LOG_FILE={}\n",
                 "WG_FRIEND_DEFAULT_ADDR={}\n",
                 "WG_FRIEND_DEFAULT_MTU={}\n",
@@ -73,6 +74,7 @@ WantedBy=multi-user.target
             app.boringtun_bin.display(),
             app.conf_dir.display(),
             app.wg_run_dir.display(),
+            app.state_dir.display(),
             app.log_file.display(),
             app.default_addr,
             app.default_mtu,
@@ -166,17 +168,18 @@ pub fn uninstall(
         removed.push(("env".to_string(), app.env_file.display().to_string()));
     }
 
+    let state_instance_dir = app.instance_state_dir(&iface.interface);
     if keep_generated {
         kept.push((
-            "client_dir".to_string(),
-            iface.client_dir.display().to_string(),
+            "state_dir".to_string(),
+            state_instance_dir.display().to_string(),
         ));
-    } else if iface.client_dir.exists() {
-        fs::remove_dir_all(&iface.client_dir)
-            .with_context(|| format!("failed to remove {}", iface.client_dir.display()))?;
+    } else if state_instance_dir.exists() {
+        fs::remove_dir_all(&state_instance_dir)
+            .with_context(|| format!("failed to remove {}", state_instance_dir.display()))?;
         removed.push((
-            "client_dir".to_string(),
-            iface.client_dir.display().to_string(),
+            "state_dir".to_string(),
+            state_instance_dir.display().to_string(),
         ));
     }
 
