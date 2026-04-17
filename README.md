@@ -1,4 +1,4 @@
-# wg-friend v0.2.0
+# wg-friend v0.2.1
 
 `wg-friend` is a semantic CLI companion for WireGuard and BoringTun.
 
@@ -65,6 +65,19 @@ Instead it uses:
 
 This keeps the CLI easy to use over SSH while leaving room for future API or Cloudflare-backed client distribution.
 
+
+## Output formatter
+
+This revision adds a lightweight string formatter layer instead of a TUI:
+
+- aligned key/value sections
+- section dividers
+- simple tables for lists and peer views
+- ANSI color badges when stdout is a TTY
+- plain output automatically when redirected or piped
+
+The goal is to make `server status`, `client list`, and `doctor` feel like one coherent CLI instead of raw command dumps.
+
 ## Local client management model
 
 Managed clients are tracked in two places:
@@ -83,8 +96,7 @@ PresharedKey = ...
 PersistentKeepalive = 25
 ```
 
-This gives `wg-friend` a stable way to list, show, remove, and export its own managed clients without pretending it owns
-every peer in the file.
+This gives `wg-friend` a stable way to list, show, remove, and export its own managed clients without pretending it owns every peer in the file.
 
 ## Quick start
 
@@ -106,5 +118,4 @@ sudo wg-friend client export wg0 alice --output ./alice.conf
 - Linux + systemd only
 - assumes `wg`, `ip`, and `boringtun-cli` are installed
 - assumes WireGuard configs live under `/etc/wireguard`
-- this repository was prepared in an environment without a Rust toolchain, so run local formatting and compile checks
-  before deploying
+- this repository was prepared in an environment without a Rust toolchain, so run local formatting and compile checks before deploying

@@ -4,6 +4,7 @@ use anyhow::Result;
 use super::server::resolve_server;
 use crate::config::AppConfig;
 use crate::ui::kv;
+use crate::ui::Table;
 use crate::ui::Tone;
 use crate::ui::{self};
 use crate::util::ensure_boringtun_present;
@@ -19,24 +20,107 @@ use crate::util::safe_capture;
 use crate::util::safe_tail;
 use crate::wireguard::WgRuntimeSummary;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CheckStatus {
+    Pass,
+    Warn,
+    Fail,
+}
+
+impl CheckStatus {
+    fn label(self) -> String {
+        match self {
+            Self::Pass => ui::badge("PASS", Tone::Good),
+            Self::Warn => ui::badge("WARN", Tone::Warn),
+            Self::Fail => ui::badge("FAIL", Tone::Bad),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DoctorCheck {
+    name: String,
+    status: CheckStatus,
+    detail: String,
+}
+
+impl DoctorCheck {
+    fn pass(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: CheckStatus::Pass,
+            detail: detail.into(),
+        }
+    }
+
+    fn warn(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: CheckStatus::Warn,
+            detail: detail.into(),
+        }
+    }
+
+    fn fail(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: CheckStatus::Fail,
+            detail: detail.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct DoctorCounts {
+    pass: usize,
+    warn: usize,
+    fail: usize,
+}
+
+impl DoctorCounts {
+    fn add(&mut self, status: CheckStatus) {
+        match status {
+            CheckStatus::Pass => self.pass += 1,
+            CheckStatus::Warn => self.warn += 1,
+            CheckStatus::Fail => self.fail += 1,
+        }
+    }
+
+    fn total(self) -> usize {
+        self.pass + self.warn + self.fail
+    }
+}
+
 pub fn check(app: &AppConfig, interface: Option<String>) -> Result<()> {
-    ensure_root()?;
-    ensure_required_commands()?;
-
     let iface = resolve_server(app, interface)?;
-    ensure_config_exists(&iface)?;
-    ensure_boringtun_present(app)?;
-    ensure_tun_device()?;
 
-    ui::print_section("doctor check");
+    let checks = vec![
+        check_root(),
+        check_required_commands(),
+        check_config_exists(&iface.conf_file),
+        check_boringtun_present(app),
+        check_tun_device(),
+    ];
+
+    let counts = print_doctor_checks("doctor check", &checks);
+
+    ui::print_section("doctor summary");
     ui::print_kv_rows(&vec![
         kv("interface", iface.interface),
         kv("config", iface.conf_file.display().to_string()),
         kv("boringtun", app.boringtun_bin.display().to_string()),
-        kv("result", ui::status_badge("ok")),
+        kv("checks", counts.total().to_string()),
+        kv("pass", ui::badge(&counts.pass.to_string(), Tone::Good)),
+        kv("warn", ui::badge(&counts.warn.to_string(), Tone::Warn)),
+        kv("fail", ui::badge(&counts.fail.to_string(), Tone::Bad)),
     ]);
-    ui::print_message("Local prerequisites look sane.", Tone::Good);
-    Ok(())
+
+    if counts.fail == 0 {
+        ui::print_message("Local prerequisites look sane.", Tone::Good);
+        Ok(())
+    } else {
+        bail!("doctor check found {} failing item(s)", counts.fail)
+    }
 }
 
 pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
@@ -58,6 +142,8 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
     } else {
         None
     };
+    let service_state =
+        crate::systemd::is_active(&service).unwrap_or_else(|_| "unknown".to_string());
 
     ui::print_section("doctor summary");
     ui::print_kv_rows(&vec![
@@ -69,20 +155,19 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
         kv("client_dir", iface.client_dir.display().to_string()),
     ]);
 
-    ui::print_section("doctor phases");
-    ui::print_kv_rows(&vec![
-        kv("config_exists", ui::yes_no(config_exists)),
-        kv("interface_present", ui::yes_no(interface_present)),
-        kv("link_up", ui::yes_no(link_up)),
-        kv("addr_present", ui::yes_no(addr_present)),
-        kv("wg_show", ui::yes_no(wg_ready)),
-        kv(
-            "service_active",
-            ui::status_badge(
-                &crate::systemd::is_active(&service).unwrap_or_else(|_| "unknown".to_string()),
-            ),
+    let checks = vec![
+        check_config_exists(&iface.conf_file),
+        check_service_state(&service_state, interface_present),
+        check_interface_present(&iface.interface, interface_present),
+        check_link_up(&iface.interface, interface_present, link_up),
+        check_addr_present(&iface.interface, interface_present, addr_present),
+        check_wg_show(&iface.interface, wg_ready),
+        check_peer_count(
+            runtime.as_ref().map(|item| item.peers.len()).unwrap_or(0),
+            wg_ready,
         ),
-    ]);
+    ];
+    let counts = print_doctor_checks("doctor checks", &checks);
 
     ui::print_section("interface snapshot");
     ui::print_kv_rows(&vec![
@@ -126,7 +211,26 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
                 .map(|item| item.peers.len().to_string())
                 .unwrap_or_else(|| "0".to_string()),
         ),
+        kv("service_active", ui::status_badge(&service_state)),
     ]);
+
+    ui::print_section("doctor verdict");
+    ui::print_kv_rows(&vec![
+        kv("checks", counts.total().to_string()),
+        kv("pass", ui::badge(&counts.pass.to_string(), Tone::Good)),
+        kv("warn", ui::badge(&counts.warn.to_string(), Tone::Warn)),
+        kv("fail", ui::badge(&counts.fail.to_string(), Tone::Bad)),
+    ]);
+    if counts.fail == 0 && counts.warn == 0 {
+        ui::print_message("Doctor sees a clean local state.", Tone::Good);
+    } else if counts.fail == 0 {
+        ui::print_message("Doctor found warnings but no hard failures.", Tone::Warn);
+    } else {
+        ui::print_message(
+            "Doctor found hard failures. Review the evidence below.",
+            Tone::Bad,
+        );
+    }
 
     ui::print_section("systemd status");
     ui::print_block(&safe_capture(
@@ -176,9 +280,144 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let tail = safe_tail(&app.log_file, 80);
     ui::print_block(&tail);
 
-    if !iface.conf_file.exists() {
-        bail!("config file is missing: {}", iface.conf_file.display());
+    if counts.fail > 0 {
+        bail!("doctor run found {} failing item(s)", counts.fail);
     }
 
     Ok(())
+}
+
+fn print_doctor_checks(title: &str, checks: &[DoctorCheck]) -> DoctorCounts {
+    let mut counts = DoctorCounts::default();
+    let mut table = Table::new(vec![
+        "status".to_string(),
+        "check".to_string(),
+        "detail".to_string(),
+    ]);
+
+    for check in checks {
+        counts.add(check.status);
+        table.push_row(vec![
+            check.status.label(),
+            check.name.clone(),
+            check.detail.clone(),
+        ]);
+    }
+
+    ui::print_section(title);
+    ui::print_table(&table);
+    counts
+}
+
+fn check_root() -> DoctorCheck {
+    match ensure_root() {
+        Ok(_) => DoctorCheck::pass("root privileges", "running as root"),
+        Err(err) => DoctorCheck::fail("root privileges", err.to_string()),
+    }
+}
+
+fn check_required_commands() -> DoctorCheck {
+    match ensure_required_commands() {
+        Ok(_) => DoctorCheck::pass(
+            "required commands",
+            "wg, ip, systemctl, journalctl, ls, install found",
+        ),
+        Err(err) => DoctorCheck::fail("required commands", err.to_string()),
+    }
+}
+
+fn check_boringtun_present(app: &AppConfig) -> DoctorCheck {
+    match ensure_boringtun_present(app) {
+        Ok(_) => DoctorCheck::pass("boringtun binary", app.boringtun_bin.display().to_string()),
+        Err(err) => DoctorCheck::fail("boringtun binary", err.to_string()),
+    }
+}
+
+fn check_tun_device() -> DoctorCheck {
+    match ensure_tun_device() {
+        Ok(_) => DoctorCheck::pass("/dev/net/tun", "device is present"),
+        Err(err) => DoctorCheck::fail("/dev/net/tun", err.to_string()),
+    }
+}
+
+fn check_config_exists(path: &std::path::Path) -> DoctorCheck {
+    if path.exists() {
+        DoctorCheck::pass("config file", path.display().to_string())
+    } else {
+        DoctorCheck::fail("config file", format!("missing: {}", path.display()))
+    }
+}
+
+fn check_service_state(state: &str, interface_present: bool) -> DoctorCheck {
+    match state {
+        "active" => DoctorCheck::pass("service state", "systemd reports active"),
+        "activating" | "reloading" => {
+            DoctorCheck::warn("service state", format!("systemd reports {state}"))
+        }
+        "inactive" if interface_present => DoctorCheck::warn(
+            "service state",
+            "service inactive, but interface still exists",
+        ),
+        "inactive" => DoctorCheck::warn("service state", "systemd reports inactive"),
+        "failed" => DoctorCheck::fail("service state", "systemd reports failed"),
+        other => DoctorCheck::warn("service state", format!("systemd reports {other}")),
+    }
+}
+
+fn check_interface_present(interface: &str, present: bool) -> DoctorCheck {
+    if present {
+        DoctorCheck::pass("interface present", format!("{interface} exists"))
+    } else {
+        DoctorCheck::fail("interface present", format!("{interface} is missing"))
+    }
+}
+
+fn check_link_up(interface: &str, interface_present: bool, link_up: bool) -> DoctorCheck {
+    if !interface_present {
+        DoctorCheck::fail(
+            "link state",
+            format!("{interface} missing, cannot inspect link state"),
+        )
+    } else if link_up {
+        DoctorCheck::pass("link state", format!("{interface} is up"))
+    } else {
+        DoctorCheck::warn("link state", format!("{interface} exists but is not up"))
+    }
+}
+
+fn check_addr_present(interface: &str, interface_present: bool, addr_present: bool) -> DoctorCheck {
+    if !interface_present {
+        DoctorCheck::fail(
+            "ip address",
+            format!("{interface} missing, cannot inspect addresses"),
+        )
+    } else if addr_present {
+        DoctorCheck::pass(
+            "ip address",
+            format!("{interface} has at least one inet/inet6 address"),
+        )
+    } else {
+        DoctorCheck::warn(
+            "ip address",
+            format!("{interface} has no inet/inet6 address assigned"),
+        )
+    }
+}
+
+fn check_wg_show(interface: &str, wg_ready: bool) -> DoctorCheck {
+    if wg_ready {
+        DoctorCheck::pass("wg show", format!("wg show {interface} succeeded"))
+    } else {
+        DoctorCheck::fail("wg show", format!("wg show {interface} failed"))
+    }
+}
+
+fn check_peer_count(peer_count: usize, wg_ready: bool) -> DoctorCheck {
+    if !wg_ready {
+        DoctorCheck::fail("peer count", "wireguard runtime is not readable")
+    } else if peer_count == 0 {
+        DoctorCheck::warn("peer count", "no peers currently attached")
+    } else {
+        DoctorCheck::pass("peer count", format!("{peer_count} peer(s) visible"))
+    }
 }
