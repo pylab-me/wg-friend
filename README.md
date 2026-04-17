@@ -1,4 +1,4 @@
-# wg-friend v0.2.1
+# wg-friend
 
 `wg-friend` is a semantic CLI companion for WireGuard and BoringTun.
 
@@ -119,3 +119,11 @@ sudo wg-friend client export wg0 alice --output ./alice.conf
 - assumes `wg`, `ip`, and `boringtun-cli` are installed
 - assumes WireGuard configs live under `/etc/wireguard`
 - this repository was prepared in an environment without a Rust toolchain, so run local formatting and compile checks before deploying
+
+
+## v0.2.3 notes
+
+- `internal verify` now treats interface admin-up via link flags instead of requiring `state UP`, which avoids false failures on WireGuard interfaces that show `state UNKNOWN`.
+- `service install` now prints the resolved executable path in follow-up commands.
+- `service uninstall` removes the systemd template and can also remove generated client files and the wg-friend log.
+- `service up/down/restart` remain unsupported; the CLI now prints a direct hint to use `server up/down/restart`.

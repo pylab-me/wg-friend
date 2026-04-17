@@ -234,8 +234,24 @@ pub fn next_ipv4_in_same_subnet(base: Ipv4Addr, used: &[Ipv4Addr]) -> Option<Ipv
 }
 
 pub fn ip_link_is_up(name: &str) -> bool {
-    run_capture("ip", &["link", "show", name])
-        .map(|text| text.contains("state UP"))
+    run_capture("ip", &["link", "show", "dev", name])
+        .map(|text| {
+            let first_line = text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or_default();
+            let Some(flags) = first_line
+                .split('<')
+                .nth(1)
+                .and_then(|part| part.split('>').next())
+            else {
+                return false;
+            };
+            flags
+                .split(',')
+                .map(|item| item.trim())
+                .any(|flag| flag == "UP")
+        })
         .unwrap_or(false)
 }
 

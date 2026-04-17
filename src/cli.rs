@@ -98,6 +98,18 @@ pub enum ClientCommands {
 pub enum ServiceCommands {
     /// Install the systemd template and the default env file.
     Install,
+    /// Remove the systemd template and optionally clean generated wg-friend files.
+    Uninstall {
+        interface: Option<String>,
+        #[arg(long)]
+        keep_env: bool,
+        #[arg(long)]
+        keep_generated: bool,
+        #[arg(long)]
+        keep_log: bool,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Show current systemd unit status for a server.
     Status { interface: Option<String> },
     /// Enable the systemd unit for a server.

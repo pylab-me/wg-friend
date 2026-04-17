@@ -21,6 +21,10 @@ use crate::cli::ServiceCommands;
 use crate::config::AppConfig;
 
 fn main() {
+    if let Some(code) = maybe_handle_boundary_hint() {
+        std::process::exit(code);
+    }
+
     if let Err(error) = run() {
         eprintln!("[ERROR] {error:#}");
         std::process::exit(1);
@@ -64,6 +68,20 @@ fn run() -> Result<()> {
         },
         Commands::Service { command } => match command {
             ServiceCommands::Install => commands::service::install(&app),
+            ServiceCommands::Uninstall {
+                interface,
+                keep_env,
+                keep_generated,
+                keep_log,
+                yes,
+            } => commands::service::uninstall(
+                &app,
+                interface,
+                keep_env,
+                keep_generated,
+                keep_log,
+                yes,
+            ),
             ServiceCommands::Status { interface } => commands::service::status(&app, interface),
             ServiceCommands::Enable { interface } => commands::service::enable(&app, interface),
             ServiceCommands::Disable { interface } => commands::service::disable(&app, interface),
@@ -82,5 +100,35 @@ fn run() -> Result<()> {
             InternalCommands::Verify { interface } => commands::internal::verify(&app, interface),
             InternalCommands::Cleanup { interface } => commands::internal::cleanup(&app, interface),
         },
+    }
+}
+
+fn maybe_handle_boundary_hint() -> Option<i32> {
+    let args = std::env::args().collect::<Vec<_>>();
+    if args.len() < 3 {
+        return None;
+    }
+
+    if args.get(1).map(String::as_str) != Some("service") {
+        return None;
+    }
+
+    let Some(subcommand) = args.get(2).map(String::as_str) else {
+        return None;
+    };
+
+    let Some(program) = args.first() else {
+        return None;
+    };
+
+    match subcommand {
+        "up" | "down" | "restart" => {
+            eprintln!(
+                "'{} service {}' is not supported.\nUse: {} server {} [interface]",
+                program, subcommand, program, subcommand
+            );
+            Some(2)
+        }
+        _ => None,
     }
 }
