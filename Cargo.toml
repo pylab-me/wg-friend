@@ -9,3 +9,13 @@ license = "MIT"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 qrcode = "0.14"
+
+[profile.release]
+opt-level = 3         # 确保开启最高等级优化
+lto = "fat"           # 开启全模块链接优化，消除跨 crate 的性能开销
+codegen-units = 1     # 牺牲编译速度换取更好的机器码生成
+panic = "abort"       # 减小二进制体积，并略微提升性能（不再需要展开堆栈）
+strip = "symbols"     # 自动移除调试符号，减小库文件体积
+incremental = false    # 关闭增量编译，确保全量优化（CI 环境默认就是 false）
+debug = false          # 确保不携带任何调试信息
+

@@ -39,8 +39,9 @@ pub struct WgRuntimePeer {
     pub preshared_key: Option<String>,
     pub endpoint: Option<String>,
     pub allowed_ips: Option<String>,
-    pub latest_handshake: Option<String>,
-    pub transfer: Option<String>,
+    pub latest_handshake_epoch: Option<u64>,
+    pub transfer_rx_bytes: Option<u64>,
+    pub transfer_tx_bytes: Option<u64>,
     pub persistent_keepalive: Option<String>,
 }
 
@@ -323,58 +324,46 @@ impl PeerEntry {
 }
 
 impl WgRuntimeSummary {
-    pub fn parse(text: &str) -> Self {
-        let mut summary = WgRuntimeSummary::default();
-        let mut current_peer: Option<WgRuntimePeer> = None;
+    pub fn parse_dump(interface: &str, text: &str) -> Self {
+        let mut summary = WgRuntimeSummary {
+            interface: interface.to_string(),
+            ..Default::default()
+        };
 
-        for raw_line in text.lines() {
+        for (index, raw_line) in text.lines().enumerate() {
             let line = raw_line.trim();
             if line.is_empty() {
                 continue;
             }
 
-            if let Some(value) = line.strip_prefix("interface:") {
-                summary.interface = value.trim().to_string();
-                continue;
-            }
-
-            if let Some(value) = line.strip_prefix("listening port:") {
-                summary.listen_port = Some(value.trim().to_string());
-                continue;
-            }
-
-            if let Some(value) = line.strip_prefix("peer:") {
-                if let Some(peer) = current_peer.take() {
-                    summary.peers.push(peer);
+            let fields: Vec<&str> = line.split('\t').collect();
+            if index == 0 {
+                if let Some(listen_port) = fields.get(2).copied() {
+                    let listen_port = listen_port.trim();
+                    if !listen_port.is_empty() && listen_port != "0" {
+                        summary.listen_port = Some(listen_port.to_string());
+                    }
                 }
-                current_peer = Some(WgRuntimePeer {
-                    public_key: value.trim().to_string(),
-                    ..Default::default()
-                });
                 continue;
             }
 
-            let Some(peer) = current_peer.as_mut() else {
+            let Some(public_key) = fields.get(0).copied() else {
                 continue;
             };
-
-            if let Some(value) = line.strip_prefix("preshared key:") {
-                peer.preshared_key = Some(value.trim().to_string());
-            } else if let Some(value) = line.strip_prefix("endpoint:") {
-                peer.endpoint = Some(value.trim().to_string());
-            } else if let Some(value) = line.strip_prefix("allowed ips:") {
-                peer.allowed_ips = Some(value.trim().to_string());
-            } else if let Some(value) = line.strip_prefix("latest handshake:") {
-                peer.latest_handshake = Some(value.trim().to_string());
-            } else if let Some(value) = line.strip_prefix("transfer:") {
-                peer.transfer = Some(value.trim().to_string());
-            } else if let Some(value) = line.strip_prefix("persistent keepalive:") {
-                peer.persistent_keepalive = Some(value.trim().to_string());
+            if public_key.trim().is_empty() {
+                continue;
             }
-        }
 
-        if let Some(peer) = current_peer.take() {
-            summary.peers.push(peer);
+            summary.peers.push(WgRuntimePeer {
+                public_key: public_key.trim().to_string(),
+                preshared_key: normalize_dump_value(fields.get(1).copied()),
+                endpoint: normalize_dump_value(fields.get(2).copied()),
+                allowed_ips: normalize_dump_value(fields.get(3).copied()),
+                latest_handshake_epoch: parse_dump_u64(fields.get(4).copied()),
+                transfer_rx_bytes: parse_dump_u64(fields.get(5).copied()),
+                transfer_tx_bytes: parse_dump_u64(fields.get(6).copied()),
+                persistent_keepalive: normalize_dump_keepalive(fields.get(7).copied()),
+            });
         }
 
         summary
@@ -387,135 +376,154 @@ impl WgRuntimeSummary {
 
 impl WgRuntimePeer {
     pub fn rx_bytes_text(&self) -> String {
-        self.transfer_parts().0
+        self.transfer_rx_bytes
+            .map(format_byte_count)
+            .unwrap_or_else(|| "0B".to_string())
     }
 
     pub fn tx_bytes_text(&self) -> String {
-        self.transfer_parts().1
-    }
-
-    pub fn handshake_age_secs(&self) -> Option<u64> {
-        self.handshake_observation().age_secs
+        self.transfer_tx_bytes
+            .map(format_byte_count)
+            .unwrap_or_else(|| "0B".to_string())
     }
 
     pub fn last_seen_text(&self) -> String {
-        self.handshake_observation().display_text
+        match self.handshake_observation() {
+            HandshakeObservation::Never => "(not yet)".to_string(),
+            HandshakeObservation::Seen { display_text, .. } => display_text,
+        }
     }
 
     pub fn connectivity_state(&self) -> PeerConnectivityState {
-        let observation = self.handshake_observation();
-        match observation.age_secs {
-            Some(age) if age <= 180 => PeerConnectivityState::Online,
-            Some(_) => PeerConnectivityState::Stale,
-            None if self.endpoint.is_some() => PeerConnectivityState::Probing,
-            None => PeerConnectivityState::Offline,
+        match self.handshake_observation() {
+            HandshakeObservation::Seen { age_secs, .. } if age_secs <= 180 => {
+                PeerConnectivityState::Online
+            }
+            HandshakeObservation::Seen { .. } => PeerConnectivityState::Stale,
+            HandshakeObservation::Never if self.endpoint.is_some() => {
+                PeerConnectivityState::Probing
+            }
+            HandshakeObservation::Never => PeerConnectivityState::Offline,
         }
     }
 
     fn handshake_observation(&self) -> HandshakeObservation {
-        parse_handshake_observation(self.latest_handshake.as_deref())
-    }
+        const MIN_REASONABLE_HANDSHAKE_EPOCH: u64 = 946684800; // 2000-01-01 UTC
+        const MAX_REASONABLE_HANDSHAKE_AGE_SECS: u64 = 10 * 365 * 24 * 60 * 60; // 10 years
 
-    pub fn transfer_parts(&self) -> (String, String) {
-        let Some(raw) = self.transfer.as_deref() else {
-            return ("0B".to_string(), "0B".to_string());
-        };
-
-        let mut parts = raw.split(',');
-        let received = parts.next().unwrap_or("0B").trim();
-        let sent = parts.next().unwrap_or("0B").trim();
-        (
-            received
-                .strip_suffix(" received")
-                .unwrap_or(received)
-                .trim()
-                .to_string(),
-            sent.strip_suffix(" sent")
-                .unwrap_or(sent)
-                .trim()
-                .to_string(),
-        )
+        match self.latest_handshake_epoch {
+            Some(epoch) if epoch >= MIN_REASONABLE_HANDSHAKE_EPOCH => match current_unix_secs() {
+                Some(now) if now >= epoch => {
+                    let age_secs = now - epoch;
+                    if age_secs > MAX_REASONABLE_HANDSHAKE_AGE_SECS {
+                        HandshakeObservation::Never
+                    } else {
+                        HandshakeObservation::Seen {
+                            age_secs,
+                            display_text: format_age(age_secs),
+                        }
+                    }
+                }
+                Some(_) => HandshakeObservation::Never,
+                None => HandshakeObservation::Never,
+            },
+            _ => HandshakeObservation::Never,
+        }
     }
 }
 
 #[derive(Clone, Debug)]
-struct HandshakeObservation {
-    age_secs: Option<u64>,
-    display_text: String,
+enum HandshakeObservation {
+    Never,
+    Seen { age_secs: u64, display_text: String },
 }
 
-fn parse_handshake_observation(raw: Option<&str>) -> HandshakeObservation {
-    let Some(raw) = raw.map(str::trim) else {
-        return HandshakeObservation {
-            age_secs: None,
-            display_text: "(not yet)".to_string(),
-        };
-    };
-
-    match parse_handshake_age_secs(raw) {
-        Some(age_secs) => HandshakeObservation {
-            age_secs: Some(age_secs),
-            display_text: raw.to_string(),
-        },
-        None => HandshakeObservation {
-            age_secs: None,
-            display_text: "(not yet)".to_string(),
-        },
-    }
-}
-
-fn parse_handshake_age_secs(raw: &str) -> Option<u64> {
-    let normalized = raw.trim().to_ascii_lowercase();
-    if normalized.is_empty()
-        || normalized == "never"
-        || normalized == "(not yet)"
-        || normalized == "0"
-        || normalized.contains("not yet")
-        || normalized.contains("year")
-        || normalized.contains("1970")
-        || normalized.contains("epoch")
-    {
+fn normalize_dump_value(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || value == "(none)" || value == "off" {
         return None;
     }
-    if normalized == "now" || normalized == "just now" {
-        return Some(0);
+    Some(value.to_string())
+}
+
+fn normalize_dump_keepalive(value: Option<&str>) -> Option<String> {
+    let value = normalize_dump_value(value)?;
+    if value == "0" {
+        return None;
+    }
+    Some(value)
+}
+
+fn parse_dump_u64(value: Option<&str>) -> Option<u64> {
+    let value = value?.trim();
+    if value.is_empty() || value == "(none)" {
+        return None;
+    }
+    value.parse::<u64>().ok()
+}
+
+fn current_unix_secs() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn format_age(age_secs: u64) -> String {
+    if age_secs == 0 {
+        return "just now".to_string();
     }
 
-    let compact = normalized.strip_suffix(" ago").unwrap_or(&normalized);
-    let mut total_secs = 0u64;
-    let mut parsed_any = false;
+    let units = [
+        (30 * 24 * 60 * 60, "month", "months"),
+        (7 * 24 * 60 * 60, "week", "weeks"),
+        (24 * 60 * 60, "day", "days"),
+        (60 * 60, "hour", "hours"),
+        (60, "minute", "minutes"),
+        (1, "second", "seconds"),
+    ];
 
-    for part in compact.split(',') {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
+    let mut remaining = age_secs;
+    let mut parts: Vec<String> = Vec::new();
+    for (unit_secs, singular, plural) in units {
+        if remaining < unit_secs {
             continue;
         }
-        let mut pieces = trimmed.split_whitespace();
-        let number_text = pieces.next()?;
-        let number = number_text.parse::<u64>().ok()?;
-        let unit = pieces.next()?;
-
-        let unit_secs = if unit.starts_with("second") {
-            1
-        } else if unit.starts_with("minute") {
-            60
-        } else if unit.starts_with("hour") {
-            60 * 60
-        } else if unit.starts_with("day") {
-            24 * 60 * 60
-        } else if unit.starts_with("week") {
-            7 * 24 * 60 * 60
-        } else if unit.starts_with("month") {
-            30 * 24 * 60 * 60
-        } else {
-            return None;
-        };
-
-        parsed_any = true;
-        total_secs = total_secs.saturating_add(number.saturating_mul(unit_secs));
+        let count = remaining / unit_secs;
+        remaining %= unit_secs;
+        let label = if count == 1 { singular } else { plural };
+        parts.push(format!("{count} {label}"));
+        if parts.len() == 2 {
+            break;
+        }
     }
 
-    parsed_any.then_some(total_secs)
+    if parts.is_empty() {
+        "just now".to_string()
+    } else {
+        format!("{} ago", parts.join(", "))
+    }
+}
+
+fn format_byte_count(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+    if bytes == 0 {
+        return "0B".to_string();
+    }
+    let bytes_f = bytes as f64;
+    if bytes_f >= GIB {
+        return format!("{:.2} GiB", bytes_f / GIB);
+    }
+    if bytes_f >= MIB {
+        return format!("{:.2} MiB", bytes_f / MIB);
+    }
+    if bytes_f >= KIB {
+        return format!("{:.2} KiB", bytes_f / KIB);
+    }
+    format!("{} B", bytes)
 }
 
 pub fn render_client_config(

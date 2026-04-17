@@ -8,7 +8,6 @@ use crate::ui::Table;
 use crate::ui::Tone;
 use crate::ui::{self};
 use crate::util::ensure_boringtun_present;
-use crate::util::ensure_config_exists;
 use crate::util::ensure_required_commands;
 use crate::util::ensure_root;
 use crate::util::ensure_tun_device;
@@ -127,18 +126,18 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let service = app.service_name(&iface.interface);
 
-    let config_exists = iface.conf_file.exists();
     let interface_present = interface_exists(&iface.interface);
     let link_up = ip_link_is_up(&iface.interface);
     let addr_present = ip_addr_has_inet(&iface.interface);
     let wg_raw = safe_capture("wg", &["show", &iface.interface]);
-    let wg_ready = !wg_raw.starts_with("<failed:");
+    let wg_dump = safe_capture("wg", &["show", &iface.interface, "dump"]);
+    let wg_ready = !wg_raw.starts_with("<failed:") && !wg_dump.starts_with("<failed:");
     let ip_brief = parse_ip_brief_addr(&safe_capture(
         "ip",
         &["-brief", "addr", "show", "dev", &iface.interface],
     ));
     let runtime = if wg_ready {
-        Some(WgRuntimeSummary::parse(&wg_raw))
+        Some(WgRuntimeSummary::parse_dump(&iface.interface, &wg_dump))
     } else {
         None
     };

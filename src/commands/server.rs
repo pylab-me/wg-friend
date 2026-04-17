@@ -217,13 +217,13 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
     ]);
 
     ui::print_section("wireguard");
-    let wg_raw = safe_capture("wg", &["show", &iface.interface]);
+    let wg_raw = safe_capture("wg", &["show", &iface.interface, "dump"]);
     if wg_raw.starts_with("<failed:") {
         ui::print_message(&wg_raw, Tone::Bad);
         return Ok(());
     }
 
-    let runtime = WgRuntimeSummary::parse(&wg_raw);
+    let runtime = WgRuntimeSummary::parse_dump(&iface.interface, &wg_raw);
     let config_data = InterfaceData::parse(&iface.conf_file).ok();
     let canonical_names =
         crate::commands::client::canonical_name_map(app, &iface.interface).unwrap_or_default();
@@ -269,12 +269,15 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
                     .and_then(|data| data.managed_name_by_public_key(&peer.public_key))
             })
             .unwrap_or_else(|| format!("legacy:{}", ui::truncate_middle(&peer.public_key, 8)));
+        let endpoint = peer.endpoint.clone().unwrap_or_else(|| "-".to_string());
+        let allowed_ips = peer.allowed_ips.clone().unwrap_or_else(|| "-".to_string());
+        let handshake = peer.last_seen_text();
         table.push_row(vec![
             name,
             ui::truncate_middle(&peer.public_key, 18),
-            peer.endpoint.unwrap_or_else(|| "-".to_string()),
-            peer.allowed_ips.unwrap_or_else(|| "-".to_string()),
-            peer.latest_handshake.unwrap_or_else(|| "-".to_string()),
+            endpoint,
+            allowed_ips,
+            handshake,
         ]);
     }
     ui::print_table(&table);

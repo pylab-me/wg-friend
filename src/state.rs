@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use std::path::PathBuf;
 
 use anyhow::bail;
 use anyhow::Context;

@@ -34,6 +34,7 @@ use crate::util::safe_capture;
 use crate::wireguard::render_client_config;
 use crate::wireguard::InterfaceData;
 use crate::wireguard::PeerConnectivityState;
+use crate::wireguard::WgRuntimePeer;
 use crate::wireguard::WgRuntimeSummary;
 
 #[derive(Clone, Debug)]
@@ -48,6 +49,15 @@ struct ClientView {
     state: String,
     source: String,
     exportable: bool,
+}
+
+#[derive(Clone, Debug)]
+struct RuntimeClientSnapshot {
+    remote_ip: String,
+    rx: String,
+    tx: String,
+    last_seen: String,
+    state: String,
 }
 
 pub fn list(app: &AppConfig, interface: Option<String>) -> Result<()> {
@@ -563,39 +573,20 @@ fn build_client_views(
     let mut items = Vec::new();
 
     for state in states {
-        let runtime_peer =
-            runtime.and_then(|summary| summary.peer_by_public_key(&state.public_key));
-        let (rx, tx, remote_ip, last_seen, item_state) = match runtime_peer {
-            Some(item) => {
-                let state = item.connectivity_state();
-                (
-                    item.rx_bytes_text(),
-                    item.tx_bytes_text(),
-                    item.endpoint
-                        .clone()
-                        .unwrap_or_else(|| "(none)".to_string()),
-                    item.last_seen_text(),
-                    state.as_str().to_string(),
-                )
-            }
-            None => (
-                "0B".to_string(),
-                "0B".to_string(),
-                "(none)".to_string(),
-                "(not yet)".to_string(),
-                PeerConnectivityState::Offline.as_str().to_string(),
-            ),
-        };
+        let snapshot = runtime
+            .and_then(|summary| summary.peer_by_public_key(&state.public_key))
+            .map(runtime_snapshot)
+            .unwrap_or_else(default_runtime_snapshot);
 
         items.push(ClientView {
             name: state.name.clone(),
             public_key: state.public_key.clone(),
             virtual_ip: state.address.clone(),
-            remote_ip,
-            rx,
-            tx,
-            last_seen,
-            state: item_state,
+            remote_ip: snapshot.remote_ip,
+            rx: snapshot.rx,
+            tx: snapshot.tx,
+            last_seen: snapshot.last_seen,
+            state: snapshot.state,
             source: state.source.clone(),
             exportable: true,
         });
@@ -605,12 +596,36 @@ fn build_client_views(
     items
 }
 
+fn runtime_snapshot(peer: &WgRuntimePeer) -> RuntimeClientSnapshot {
+    let connectivity_state = peer.connectivity_state();
+    RuntimeClientSnapshot {
+        remote_ip: peer
+            .endpoint
+            .clone()
+            .unwrap_or_else(|| "(none)".to_string()),
+        rx: peer.rx_bytes_text(),
+        tx: peer.tx_bytes_text(),
+        last_seen: peer.last_seen_text(),
+        state: connectivity_state.as_str().to_string(),
+    }
+}
+
+fn default_runtime_snapshot() -> RuntimeClientSnapshot {
+    RuntimeClientSnapshot {
+        remote_ip: "(none)".to_string(),
+        rx: "0B".to_string(),
+        tx: "0B".to_string(),
+        last_seen: "(not yet)".to_string(),
+        state: PeerConnectivityState::Offline.as_str().to_string(),
+    }
+}
+
 fn read_runtime(interface: &str) -> Option<WgRuntimeSummary> {
-    let raw = safe_capture("wg", &["show", interface]);
+    let raw = safe_capture("wg", &["show", interface, "dump"]);
     if raw.starts_with("<failed:") {
         None
     } else {
-        Some(WgRuntimeSummary::parse(&raw))
+        Some(WgRuntimeSummary::parse_dump(interface, &raw))
     }
 }
 

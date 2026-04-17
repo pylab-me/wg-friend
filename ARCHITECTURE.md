@@ -1,4 +1,4 @@
-# wg-friend v0.3.x Architecture
+# wg-friend v0.4.x Architecture
 
 ## Positioning
 
@@ -161,7 +161,7 @@ The command modules stay thin and express use cases.
 
 ## Scope boundary
 
-Still out of scope in v0.3:
+Still out of scope in v0.4:
 
 - nftables / TPROXY / routing policy orchestration
 - Cloudflare-backed distribution itself
