@@ -4,6 +4,7 @@ mod commands;
 mod config;
 mod prompt;
 mod systemd;
+mod ui;
 mod util;
 mod wireguard;
 

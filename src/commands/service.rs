@@ -7,10 +7,11 @@ use anyhow::Result;
 use super::server::resolve_server;
 use crate::config::AppConfig;
 use crate::systemd;
+use crate::ui::kv;
+use crate::ui::Tone;
+use crate::ui::{self};
 use crate::util::ensure_required_commands;
 use crate::util::ensure_root;
-use crate::util::print_header;
-use crate::util::print_kv;
 
 pub fn install(app: &AppConfig) -> Result<()> {
     ensure_root()?;
@@ -97,10 +98,13 @@ WantedBy=multi-user.target
 
     systemd::daemon_reload()?;
 
-    print_header("service install");
-    print_kv("unit", unit_path.display().to_string());
-    print_kv("env", app.env_file.display().to_string());
-    println!("\nInstalled the systemd template. Example:");
+    ui::print_section("service install");
+    ui::print_kv_rows(&vec![
+        kv("unit", unit_path.display().to_string()),
+        kv("env", app.env_file.display().to_string()),
+        kv("default_interface", app.default_interface.clone()),
+    ]);
+    ui::print_message("Installed the systemd template.", Tone::Good);
     println!("  sudo wg-friend service enable {}", app.default_interface);
     println!("  sudo wg-friend server up {}", app.default_interface);
     Ok(())
@@ -109,14 +113,19 @@ WantedBy=multi-user.target
 pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let service = app.service_name(&iface.interface);
+    let active = systemd::is_active(&service).unwrap_or_else(|_| "unknown".to_string());
+    let enabled = systemd::is_enabled(&service).unwrap_or_else(|_| "unknown".to_string());
 
-    print_header("service status");
-    print_kv("unit", &service);
-    print_kv(
-        "active",
-        systemd::is_active(&service).unwrap_or_else(|_| "unknown".to_string()),
-    );
-    println!("\n{}", systemd::status_text(&service));
+    ui::print_section("service");
+    ui::print_kv_rows(&vec![
+        kv("unit", service.clone()),
+        kv("active", ui::status_badge(&active)),
+        kv("enabled", ui::status_badge(&enabled)),
+        kv("config", iface.conf_file.display().to_string()),
+    ]);
+
+    ui::print_section("systemctl status");
+    ui::print_block(&systemd::status_text(&service));
     Ok(())
 }
 
@@ -126,7 +135,11 @@ pub fn enable(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let service = app.service_name(&iface.interface);
     systemd::enable(&service)?;
-    println!("Enabled {service}.");
+    ui::print_section("service enable");
+    ui::print_kv_rows(&vec![
+        kv("unit", service),
+        kv("result", ui::status_badge("enabled")),
+    ]);
     Ok(())
 }
 
@@ -136,6 +149,10 @@ pub fn disable(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let service = app.service_name(&iface.interface);
     systemd::disable(&service)?;
-    println!("Disabled {service}.");
+    ui::print_section("service disable");
+    ui::print_kv_rows(&vec![
+        kv("unit", service),
+        kv("result", ui::status_badge("disabled")),
+    ]);
     Ok(())
 }

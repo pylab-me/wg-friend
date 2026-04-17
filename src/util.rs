@@ -16,6 +16,8 @@ use crate::command_runner::run_capture;
 use crate::command_runner::run_output;
 use crate::config::AppConfig;
 use crate::config::InterfaceConfig;
+use crate::ui::KvRow;
+use crate::ui::{self};
 
 const WG_QUICK_ONLY_KEYS: &[&str] = &[
     "Address",
@@ -28,6 +30,14 @@ const WG_QUICK_ONLY_KEYS: &[&str] = &[
     "PostDown",
     "SaveConfig",
 ];
+
+#[derive(Clone, Debug, Default)]
+pub struct IpBriefSummary {
+    pub name: String,
+    pub state: String,
+    pub ipv4: Vec<String>,
+    pub ipv6: Vec<String>,
+}
 
 pub fn ensure_root() -> Result<()> {
     if unsafe { libc_geteuid() } != 0 {
@@ -153,11 +163,11 @@ pub fn extract_config_value(source: &Path, key: &str) -> Result<Option<String>> 
 }
 
 pub fn print_header(title: &str) {
-    println!("\n== {} ==", title);
+    ui::print_section(title);
 }
 
 pub fn print_kv(key: &str, value: impl AsRef<str>) {
-    println!("{key:<24} {}", value.as_ref());
+    ui::print_kv_rows(&[KvRow::new(key, value.as_ref())]);
 }
 
 pub fn safe_capture(program: &str, args: &[&str]) -> String {
@@ -233,6 +243,42 @@ pub fn ip_addr_has_inet(name: &str) -> bool {
     run_capture("ip", &["addr", "show", "dev", name])
         .map(|text| text.contains("inet "))
         .unwrap_or(false)
+}
+
+pub fn parse_ip_brief_addr(text: &str) -> Option<IpBriefSummary> {
+    let line = text.lines().find(|line| !line.trim().is_empty())?.trim();
+    if line.starts_with("<failed:") || line == "<no output>" {
+        return None;
+    }
+
+    let parts = line.split_whitespace().collect::<Vec<_>>();
+    if parts.len() < 3 {
+        return None;
+    }
+
+    let mut summary = IpBriefSummary {
+        name: parts[0].to_string(),
+        state: parts[1].to_ascii_lowercase(),
+        ipv4: Vec::new(),
+        ipv6: Vec::new(),
+    };
+
+    for item in parts.iter().skip(2) {
+        if item.contains(':') {
+            summary.ipv6.push((*item).to_string());
+        } else if item.contains('.') {
+            summary.ipv4.push((*item).to_string());
+        }
+    }
+
+    Some(summary)
+}
+
+pub fn kv_rows_from_pairs(pairs: Vec<(&str, String)>) -> Vec<KvRow> {
+    pairs
+        .into_iter()
+        .map(|(key, value)| KvRow::new(key, value))
+        .collect()
 }
 
 fn matches_wg_quick_only_key(line: &str) -> bool {

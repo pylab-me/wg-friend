@@ -27,6 +27,10 @@ pub fn is_active(service_name: &str) -> Result<String> {
     run_capture("systemctl", &["is-active", service_name])
 }
 
+pub fn is_enabled(service_name: &str) -> Result<String> {
+    run_capture("systemctl", &["is-enabled", service_name])
+}
+
 pub fn daemon_reload() -> Result<()> {
     run("systemctl", &["daemon-reload"])
 }

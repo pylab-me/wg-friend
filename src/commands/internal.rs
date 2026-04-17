@@ -1,11 +1,12 @@
 use std::fs;
 
-use anyhow::Context;
 use anyhow::Result;
 
 use crate::command_runner::run;
 use crate::command_runner::run_capture;
 use crate::config::AppConfig;
+use crate::ui::kv;
+use crate::ui::{self};
 use crate::util::clean_wireguard_config;
 use crate::util::ensure_boringtun_present;
 use crate::util::ensure_config_exists;
@@ -17,8 +18,6 @@ use crate::util::extract_config_value;
 use crate::util::interface_exists;
 use crate::util::ip_addr_has_inet;
 use crate::util::ip_link_is_up;
-use crate::util::print_header;
-use crate::util::print_kv;
 use crate::util::wait_until;
 use crate::util::wg_show_ready;
 
@@ -32,12 +31,14 @@ pub fn preflight(app: &AppConfig, interface: String) -> Result<()> {
     ensure_paths(app, &iface)?;
     ensure_config_exists(&iface)?;
 
-    print_header("preflight");
-    print_kv("interface", &iface.interface);
-    print_kv("config", iface.conf_file.display().to_string());
-    print_kv("client_dir", iface.client_dir.display().to_string());
-    print_kv("boringtun", app.boringtun_bin.display().to_string());
-    print_kv("result", "OK");
+    ui::print_section("preflight");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface),
+        kv("config", iface.conf_file.display().to_string()),
+        kv("client_dir", iface.client_dir.display().to_string()),
+        kv("boringtun", app.boringtun_bin.display().to_string()),
+        kv("result", ui::status_badge("ok")),
+    ]);
     Ok(())
 }
 
@@ -94,11 +95,13 @@ pub fn configure(app: &AppConfig, interface: String) -> Result<()> {
 
     let _ = fs::remove_file(cleaned);
 
-    print_header("configure");
-    print_kv("interface", &iface.interface);
-    print_kv("address", &address);
-    print_kv("mtu", &mtu);
-    print_kv("result", "OK");
+    ui::print_section("configure");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface),
+        kv("address", address),
+        kv("mtu", mtu),
+        kv("result", ui::status_badge("ok")),
+    ]);
     Ok(())
 }
 
@@ -118,9 +121,11 @@ pub fn verify(app: &AppConfig, interface: String) -> Result<()> {
             && wg_show_ready(&iface.interface)
     })?;
 
-    print_header("verify");
-    print_kv("interface", &iface.interface);
-    print_kv("result", "READY");
+    ui::print_section("verify");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface),
+        kv("result", ui::status_badge("ready")),
+    ]);
     Ok(())
 }
 
@@ -134,8 +139,10 @@ pub fn cleanup(app: &AppConfig, interface: String) -> Result<()> {
         let _ = run_capture("ip", &["link", "delete", &iface.interface]);
     }
 
-    print_header("cleanup");
-    print_kv("interface", &iface.interface);
-    print_kv("result", "OK");
+    ui::print_section("cleanup");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface),
+        kv("result", ui::status_badge("ok")),
+    ]);
     Ok(())
 }

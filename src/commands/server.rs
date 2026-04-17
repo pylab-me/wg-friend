@@ -9,28 +9,50 @@ use crate::prompt::ask_text;
 use crate::prompt::ask_yes_no;
 use crate::prompt::select_one;
 use crate::systemd;
+use crate::ui::kv;
+use crate::ui::Table;
+use crate::ui::Tone;
+use crate::ui::{self};
 use crate::util::ensure_config_exists;
 use crate::util::ensure_required_commands;
 use crate::util::interface_exists;
-use crate::util::print_header;
-use crate::util::print_kv;
+use crate::util::parse_ip_brief_addr;
 use crate::util::safe_capture;
 use crate::wireguard::InterfaceData;
+use crate::wireguard::WgRuntimeSummary;
 
 pub fn list(app: &AppConfig) -> Result<()> {
-    print_header("servers");
     let items = app.discover_interfaces();
+
+    ui::print_section("servers");
     if items.is_empty() {
-        println!(
-            "No server configs were found in {}.",
-            app.conf_dir.display()
+        ui::print_message(
+            &format!(
+                "No server configs were found in {}.",
+                app.conf_dir.display()
+            ),
+            Tone::Warn,
         );
         return Ok(());
     }
 
+    let mut table = Table::new(vec![
+        "interface".to_string(),
+        "config".to_string(),
+        "clients".to_string(),
+    ]);
     for item in items {
-        println!("- {item}");
+        let iface = app.resolve_interface(Some(item.clone()));
+        let client_count = InterfaceData::parse(&iface.conf_file)
+            .map(|data| data.managed_clients().len().to_string())
+            .unwrap_or_else(|_| "?".to_string());
+        table.push_row(vec![
+            item,
+            iface.conf_file.display().to_string(),
+            client_count,
+        ]);
     }
+    ui::print_table(&table);
     Ok(())
 }
 
@@ -39,20 +61,55 @@ pub fn show(app: &AppConfig, interface: Option<String>) -> Result<()> {
     ensure_config_exists(&iface)?;
     let data = InterfaceData::parse(&iface.conf_file)?;
 
-    print_header("server show");
-    print_kv("interface", &iface.interface);
-    print_kv("config", iface.conf_file.display().to_string());
-    print_kv("service", app.service_name(&iface.interface));
-    print_kv(
-        "address",
-        data.interface_value("Address").unwrap_or("<unset>"),
-    );
-    print_kv(
-        "listen_port",
-        data.server_listen_port().unwrap_or("<unset>"),
-    );
-    print_kv("mtu", data.interface_value("MTU").unwrap_or("<unset>"));
-    print_kv("managed_clients", data.managed_clients().len().to_string());
+    ui::print_section("server");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface.clone()),
+        kv("config", iface.conf_file.display().to_string()),
+        kv("service", app.service_name(&iface.interface)),
+        kv(
+            "address",
+            data.interface_value("Address")
+                .unwrap_or("<unset>")
+                .to_string(),
+        ),
+        kv(
+            "listen_port",
+            data.server_listen_port().unwrap_or("<unset>").to_string(),
+        ),
+        kv(
+            "mtu",
+            data.interface_value("MTU").unwrap_or("<unset>").to_string(),
+        ),
+        kv("managed_clients", data.managed_clients().len().to_string()),
+    ]);
+
+    if !data.managed_clients().is_empty() {
+        ui::print_section("managed clients");
+        let mut table = Table::new(vec![
+            "name".to_string(),
+            "allowed_ips".to_string(),
+            "public_key".to_string(),
+        ]);
+        for name in data.managed_clients() {
+            if let Some(peer) = data.managed_peer(&name) {
+                table.push_row(vec![
+                    name,
+                    peer.values
+                        .get("AllowedIPs")
+                        .cloned()
+                        .unwrap_or_else(|| "-".to_string()),
+                    ui::truncate_middle(
+                        peer.values
+                            .get("PublicKey")
+                            .map(String::as_str)
+                            .unwrap_or("-"),
+                        20,
+                    ),
+                ]);
+            }
+        }
+        ui::print_table(&table);
+    }
     Ok(())
 }
 
@@ -62,7 +119,14 @@ pub fn up(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let service = app.service_name(&iface.interface);
     systemd::start(&service)?;
-    println!("Started {service}.");
+
+    ui::print_section("server up");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface.clone()),
+        kv("service", service.clone()),
+        kv("result", ui::status_badge("started")),
+    ]);
+
     status(app, Some(iface.interface))
 }
 
@@ -72,7 +136,13 @@ pub fn down(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let service = app.service_name(&iface.interface);
     systemd::stop(&service)?;
-    println!("Stopped {service}.");
+
+    ui::print_section("server down");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface),
+        kv("service", service),
+        kv("result", ui::status_badge("stopped")),
+    ]);
     Ok(())
 }
 
@@ -82,39 +152,125 @@ pub fn restart(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let service = app.service_name(&iface.interface);
     systemd::restart(&service)?;
-    println!("Restarted {service}.");
+
+    ui::print_section("server restart");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface.clone()),
+        kv("service", service.clone()),
+        kv("result", ui::status_badge("restarted")),
+    ]);
+
     status(app, Some(iface.interface))
 }
 
 pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let service = app.service_name(&iface.interface);
+    let active = systemd::is_active(&service).unwrap_or_else(|_| "unknown".to_string());
+    let enabled = systemd::is_enabled(&service).unwrap_or_else(|_| "unknown".to_string());
 
-    print_header("service");
-    print_kv("unit", &service);
-    print_kv(
-        "active",
-        systemd::is_active(&service).unwrap_or_else(|_| "unknown".to_string()),
-    );
+    ui::print_section("service");
+    ui::print_kv_rows(&vec![
+        kv("unit", service.clone()),
+        kv("active", ui::status_badge(&active)),
+        kv("enabled", ui::status_badge(&enabled)),
+    ]);
 
-    print_header("interface");
-    print_kv("name", &iface.interface);
-    print_kv("config", iface.conf_file.display().to_string());
-    print_kv(
-        "present",
-        if interface_exists(&iface.interface) {
-            "yes"
-        } else {
-            "no"
-        },
-    );
-    println!(
-        "{}",
-        safe_capture("ip", &["-brief", "addr", "show", "dev", &iface.interface])
-    );
+    ui::print_section("interface");
+    let brief = parse_ip_brief_addr(&safe_capture(
+        "ip",
+        &["-brief", "addr", "show", "dev", &iface.interface],
+    ));
+    let present = interface_exists(&iface.interface);
+    let state = brief
+        .as_ref()
+        .map(|item| item.state.clone())
+        .unwrap_or_else(|| "missing".to_string());
+    let ipv4 = brief
+        .as_ref()
+        .map(|item| {
+            if item.ipv4.is_empty() {
+                "-".to_string()
+            } else {
+                item.ipv4.join(", ")
+            }
+        })
+        .unwrap_or_else(|| "-".to_string());
+    let ipv6 = brief
+        .as_ref()
+        .map(|item| {
+            if item.ipv6.is_empty() {
+                "-".to_string()
+            } else {
+                item.ipv6.join(", ")
+            }
+        })
+        .unwrap_or_else(|| "-".to_string());
 
-    print_header("wireguard");
-    println!("{}", safe_capture("wg", &["show", &iface.interface]));
+    ui::print_kv_rows(&vec![
+        kv("name", iface.interface.clone()),
+        kv("config", iface.conf_file.display().to_string()),
+        kv("present", ui::yes_no(present)),
+        kv("state", ui::status_badge(&state)),
+        kv("ipv4", ipv4),
+        kv("ipv6", ipv6),
+    ]);
+
+    ui::print_section("wireguard");
+    let wg_raw = safe_capture("wg", &["show", &iface.interface]);
+    if wg_raw.starts_with("<failed:") {
+        ui::print_message(&wg_raw, Tone::Bad);
+        return Ok(());
+    }
+
+    let runtime = WgRuntimeSummary::parse(&wg_raw);
+    let config_data = InterfaceData::parse(&iface.conf_file).ok();
+    ui::print_kv_rows(&vec![
+        kv(
+            "interface",
+            if runtime.interface.is_empty() {
+                iface.interface.clone()
+            } else {
+                runtime.interface.clone()
+            },
+        ),
+        kv(
+            "listen_port",
+            runtime
+                .listen_port
+                .clone()
+                .unwrap_or_else(|| "-".to_string()),
+        ),
+        kv("peer_count", runtime.peers.len().to_string()),
+    ]);
+
+    if runtime.peers.is_empty() {
+        ui::print_message("No peers are currently visible via `wg show`.", Tone::Warn);
+        return Ok(());
+    }
+
+    ui::print_section("peers");
+    let mut table = Table::new(vec![
+        "name".to_string(),
+        "public_key".to_string(),
+        "endpoint".to_string(),
+        "allowed_ips".to_string(),
+        "handshake".to_string(),
+    ]);
+    for peer in runtime.peers {
+        let name = config_data
+            .as_ref()
+            .and_then(|data| data.managed_name_by_public_key(&peer.public_key))
+            .unwrap_or_else(|| "-".to_string());
+        table.push_row(vec![
+            name,
+            ui::truncate_middle(&peer.public_key, 18),
+            peer.endpoint.unwrap_or_else(|| "-".to_string()),
+            peer.allowed_ips.unwrap_or_else(|| "-".to_string()),
+            peer.latest_handshake.unwrap_or_else(|| "-".to_string()),
+        ]);
+    }
+    ui::print_table(&table);
     Ok(())
 }
 
@@ -123,9 +279,11 @@ pub fn edit(app: &AppConfig, interface: Option<String>) -> Result<()> {
     ensure_config_exists(&iface)?;
     let mut data = InterfaceData::parse(&iface.conf_file)?;
 
-    print_header("server edit");
-    print_kv("interface", &iface.interface);
-    print_kv("config", iface.conf_file.display().to_string());
+    ui::print_section("server edit");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface.clone()),
+        kv("config", iface.conf_file.display().to_string()),
+    ]);
 
     let current_address = data
         .interface_value("Address")
@@ -144,13 +302,15 @@ pub fn edit(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let next_mtu = ask_text("MTU", Some(&current_mtu))?;
     let next_port = ask_text("ListenPort", Some(&current_port))?;
 
-    print_header("pending changes");
-    print_kv("address", &next_address);
-    print_kv("mtu", &next_mtu);
-    print_kv("listen_port", &next_port);
+    ui::print_section("pending changes");
+    ui::print_kv_rows(&vec![
+        kv("address", next_address.clone()),
+        kv("mtu", next_mtu.clone()),
+        kv("listen_port", next_port.clone()),
+    ]);
 
     if !ask_yes_no("Save changes", true)? {
-        println!("No changes written.");
+        ui::print_message("No changes written.", Tone::Warn);
         return Ok(());
     }
 
@@ -159,7 +319,7 @@ pub fn edit(app: &AppConfig, interface: Option<String>) -> Result<()> {
     data.set_interface_value("ListenPort", next_port);
     data.write_to(&iface.conf_file)?;
 
-    println!("Saved {}.", iface.conf_file.display());
+    ui::print_message(&format!("Saved {}.", iface.conf_file.display()), Tone::Good);
     Ok(())
 }
 

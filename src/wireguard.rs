@@ -26,6 +26,24 @@ pub struct PeerEntry {
     pub values: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct WgRuntimeSummary {
+    pub interface: String,
+    pub listen_port: Option<String>,
+    pub peers: Vec<WgRuntimePeer>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct WgRuntimePeer {
+    pub public_key: String,
+    pub preshared_key: Option<String>,
+    pub endpoint: Option<String>,
+    pub allowed_ips: Option<String>,
+    pub latest_handshake: Option<String>,
+    pub transfer: Option<String>,
+    pub persistent_keepalive: Option<String>,
+}
+
 impl InterfaceData {
     pub fn parse(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
@@ -220,6 +238,17 @@ impl InterfaceData {
     pub fn server_listen_port(&self) -> Option<&str> {
         self.interface_value("ListenPort")
     }
+
+    pub fn managed_name_by_public_key(&self, public_key: &str) -> Option<String> {
+        self.peers.iter().find_map(|peer| {
+            let key = peer.values.get("PublicKey")?;
+            if key == public_key {
+                peer.managed_name.clone()
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl PeerEntry {
@@ -227,6 +256,65 @@ impl PeerEntry {
         self.values
             .get("AllowedIPs")
             .and_then(|value| base_ip_from_cidr(value))
+    }
+}
+
+impl WgRuntimeSummary {
+    pub fn parse(text: &str) -> Self {
+        let mut summary = WgRuntimeSummary::default();
+        let mut current_peer: Option<WgRuntimePeer> = None;
+
+        for raw_line in text.lines() {
+            let line = raw_line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some(value) = line.strip_prefix("interface:") {
+                summary.interface = value.trim().to_string();
+                continue;
+            }
+
+            if let Some(value) = line.strip_prefix("listening port:") {
+                summary.listen_port = Some(value.trim().to_string());
+                continue;
+            }
+
+            if let Some(value) = line.strip_prefix("peer:") {
+                if let Some(peer) = current_peer.take() {
+                    summary.peers.push(peer);
+                }
+                current_peer = Some(WgRuntimePeer {
+                    public_key: value.trim().to_string(),
+                    ..Default::default()
+                });
+                continue;
+            }
+
+            let Some(peer) = current_peer.as_mut() else {
+                continue;
+            };
+
+            if let Some(value) = line.strip_prefix("preshared key:") {
+                peer.preshared_key = Some(value.trim().to_string());
+            } else if let Some(value) = line.strip_prefix("endpoint:") {
+                peer.endpoint = Some(value.trim().to_string());
+            } else if let Some(value) = line.strip_prefix("allowed ips:") {
+                peer.allowed_ips = Some(value.trim().to_string());
+            } else if let Some(value) = line.strip_prefix("latest handshake:") {
+                peer.latest_handshake = Some(value.trim().to_string());
+            } else if let Some(value) = line.strip_prefix("transfer:") {
+                peer.transfer = Some(value.trim().to_string());
+            } else if let Some(value) = line.strip_prefix("persistent keepalive:") {
+                peer.persistent_keepalive = Some(value.trim().to_string());
+            }
+        }
+
+        if let Some(peer) = current_peer.take() {
+            summary.peers.push(peer);
+        }
+
+        summary
     }
 }
 
