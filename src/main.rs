@@ -120,7 +120,11 @@ fn run() -> Result<()> {
         Commands::Doctor { command } => match command {
             DoctorCommands::Run { interface } => commands::doctor::run(&app, interface),
             DoctorCommands::Check { interface } => commands::doctor::check(&app, interface),
-            DoctorCommands::MtuProbe { interface } => commands::doctor::mtu_probe(&app, interface),
+            DoctorCommands::MtuProbe {
+                interface,
+                active,
+                host,
+            } => commands::doctor::mtu_probe(&app, interface, active, host),
         },
         Commands::Internal { command } => match command {
             InternalCommands::Preflight { interface } => {

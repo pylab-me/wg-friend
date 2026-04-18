@@ -58,6 +58,9 @@ wg-friend service disable [iface]
 ```text
 wg-friend doctor check [iface]
 wg-friend doctor run [iface]
+wg-friend doctor mtu-probe [--interface wg0]
+wg-friend doctor mtu-probe [--interface wg0] --active
+wg-friend doctor mtu-probe [--interface wg0] --active --host 8.8.8.8
 ```
 
 ## Canonical client model
@@ -131,7 +134,7 @@ sudo wg-friend client qrcode wg0 alice
 ## Notes
 
 - Linux + systemd only
-- assumes `wg`, `ip`, and `boringtun-cli` are installed
+- assumes `wg`, `ip`, `ping`, and `boringtun-cli` are installed for full diagnostics
 - assumes WireGuard configs live under `/etc/wireguard`
 - canonical `wg-friend` client state lives under `/etc/wg-friend`
 - this repository was prepared in an environment without a Rust toolchain, so run local formatting and compile checks before deploying

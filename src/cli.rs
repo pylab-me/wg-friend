@@ -158,10 +158,14 @@ pub enum DoctorCommands {
     Run { interface: Option<String> },
     /// Validate local prerequisites only.
     Check { interface: Option<String> },
-    /// Print MTU guidance without changing configuration.
+    /// Print MTU guidance or run an active IPv4 DF probe.
     MtuProbe {
         #[arg(long)]
         interface: Option<String>,
+        #[arg(long)]
+        active: bool,
+        #[arg(long)]
+        host: Option<String>,
     },
 }
 
