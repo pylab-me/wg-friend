@@ -1,0 +1,637 @@
+# 自建软路由迁移排障 Skills
+
+## 1. 适用场景
+
+这份 Skills 适合下面这类场景：
+
+- 旧软路由迁移到新软路由
+- LXC / VM / 裸机之间迁移网络功能
+- WireGuard / BoringTun 迁移后客户端连不上
+- WireGuard 能连上，但业务访问异常
+- 需要区分问题到底在：
+  - systemd / 服务生命周期
+  - WireGuard 运行态
+  - peer 配置
+  - 默认网关 / 出站路径
+  - nft / ip rule / NAT / tproxy
+  - 虚拟化网络路径
+
+---
+
+## 2. 排障总原则
+
+迁移网络系统时，最容易犯的错是：
+
+- 只看配置文件
+- 只看服务是否 active
+- 只看单机内部日志
+
+真正有效的方法是**分层定位**。
+
+### 第一层：服务是否真的起来
+确认：
+
+- systemd
+- 进程
+- 接口
+- 运行态配置
+
+### 第二层：握手包有没有进来、有没有回去
+确认：
+
+- 客户端发起包是否到达
+- 新机器是否立刻回包
+
+### 第三层：运行态是否真的和旧机器一致
+不要只看文件，要看：
+
+- `wg showconf`
+- `wg show dump`
+
+### 第四层：出站路径是否正确
+确认：
+
+- 默认网关是不是旧机器
+- 回包有没有绕旧路由
+- 是否存在“半迁移”状态
+
+### 第五层：虚拟化与桥接路径是否一致
+确认：
+
+- VM / LXC / Bridge / 物理口
+- 包是否真的上到桥和物理网卡
+
+---
+
+# 3. 服务生命周期检查
+
+## 3.1 查看 systemd 状态
+
+```bash
+systemctl status wg-friend@wg0 --no-pager --full
+````
+
+### 用途
+
+确认：
+
+* unit 是否 active
+* `ExecStartPre / ExecStartPost / ExecStopPost` 是否成功
+* `boringtun-cli` 是否在运行
+
+### 关键看点
+
+* `Active: active (running)`
+* `Main PID: ... boringtun-cli`
+* `verify result ready`
+
+### 经验
+
+如果看到：
+
+* `ExecStartPost ... internal verify ... status=1/FAILURE`
+* `Restart=on-failure`
+
+通常说明：
+
+* 服务本体已经起来
+* 但“就绪判定”写错了
+* systemd 被误导反复重启
+
+---
+
+## 3.2 使用内建 doctor 做本机健康检查
+
+```bash
+wg-friend doctor check
+wg-friend doctor run
+```
+
+### 用途
+
+快速确认：
+
+* root 权限
+* 必要命令是否存在
+* `/dev/net/tun`
+* 配置文件
+* `boringtun-cli`
+* `wg0`
+* `wg show`
+
+### 经验
+
+`doctor` 全 PASS 只代表：
+
+* 本机 bring-up 没问题
+
+不代表：
+
+* 客户端一定握手成功
+* 业务访问一定正常
+
+---
+
+# 4. WireGuard 运行态检查
+
+## 4.1 看人类可读运行态
+
+```bash
+wg show wg0
+```
+
+### 用途
+
+看：
+
+* peer
+* endpoint
+* allowed ips
+* transfer
+* latest handshake
+
+### 经验
+
+这条命令适合快速总览，但某些实现里：
+
+* `latest handshake`
+
+可能会显示成：
+
+```text
+56 years ago
+```
+
+这种值不能直接拿来当真实握手时间。
+
+---
+
+## 4.2 看 machine-readable 运行态
+
+```bash
+wg show wg0 dump
+```
+
+### 用途
+
+这是更可靠的运行态数据源。
+
+### peer 行字段顺序
+
+一般是：
+
+```text
+public_key  preshared_key  endpoint  allowed_ips  latest_handshake  transfer_rx  transfer_tx  persistent_keepalive
+```
+
+### 经验
+
+迁移排障时，优先信 `dump`，不要优先信人类可读格式化文本。
+
+---
+
+## 4.3 连续观察 endpoint / transfer / handshake
+
+```bash
+watch -n1 'wg show wg0 endpoints; echo; wg show wg0 latest-handshakes; echo; wg show wg0 transfer'
+```
+
+### 用途
+
+实时看：
+
+* endpoint 是否被学习到
+* 握手字段是否变化
+* transfer 是否增长
+
+### 经验
+
+很适合区分：
+
+* 包有没有到
+* endpoint 有没有学到
+* transfer 是否真的在变化
+
+---
+
+# 5. 配置是否真的一致：不要只看文件，要看 running config
+
+## 5.1 对比运行态配置
+
+### 旧机器
+
+```bash
+wg showconf wg0 > /tmp/old-running.conf
+```
+
+### 新机器
+
+```bash
+wg showconf wg0 > /tmp/new-running.conf
+cat /etc/wireguard/wg0.conf > /tmp/new-file.conf
+diff -u /tmp/new-file.conf /tmp/new-running.conf
+```
+
+### 用途
+
+确认：
+
+* `PublicKey`
+* `PresharedKey`
+* `AllowedIPs`
+* `ListenPort`
+
+是否真正进入运行态。
+
+### 经验
+
+很多时候：
+
+* 文件看起来一样
+* 运行态不一定一样
+
+所以迁移时一定要比 `running config`。
+
+---
+
+## 5.2 对比 Interface PrivateKey（不暴露明文）
+
+```bash
+grep '^PrivateKey' /etc/wireguard/wg0.conf | sha256sum
+```
+
+### 用途
+
+确认新旧机器的 Interface 私钥是否一致。
+
+### 经验
+
+这一步非常高效，可以快速排除：
+
+* “是不是新机器私钥不一致”
+
+---
+
+# 6. 默认网关 / 出站路径检查（迁移最关键）
+
+## 6.1 查看路由表
+
+```bash
+ip route show
+ip route get <客户端公网IP>
+```
+
+### 用途
+
+确认新机器的真实出站路径。
+
+### 本次经验
+
+这是迁移里最关键的命令之一。
+
+如果看到：
+
+```text
+default via 1.2.3.4 dev eth0
+```
+
+而 `1.2.3.4` 是旧机器，就说明：
+
+* 新机器的出站还在借旧机器
+* WG 回包可能被旧机器再次处理
+* 会造成“新机本地看起来没问题，客户端却连不上”
+
+### 结论
+
+迁移完成后：
+
+**新软路由的默认网关应直接指向真实物理上游路由器。**
+不应继续挂在旧软路由上。
+
+---
+
+## 6.2 判断是否处于“半迁移”状态
+
+典型表现：
+
+* 配置迁过去了
+* 服务也起来了
+* 客户端握手包能到新机器
+* 新机器也回包
+* 但客户端仍然不通
+
+这时要高度怀疑：
+
+* 默认网关还在旧机器
+* 旧机器仍然在“碰”新机器的回包
+
+---
+
+# 7. 抓包：确认包到了哪一层
+
+## 7.1 在新机器上抓 WireGuard 握手流量
+
+```bash
+tcpdump -ni eth0 udp port 12345 and host <client-public-ip>
+```
+
+### 用途
+
+确认：
+
+* 客户端握手包有没有到新机器
+* 新机器有没有立刻回包
+
+### 经验
+
+如果入站和回包都看得到，说明：
+
+* 新机器上的 WG 本身并没有“完全坏”
+
+---
+
+## 7.2 在宿主桥或虚拟桥上抓包
+
+```bash
+tcpdump -ni vmbr0 host <client-public-ip> and udp
+```
+
+### 用途
+
+确认：
+
+* VM 发出的包是否真的到了 bridge
+* bridge 上是否还有别的机器在额外发包
+
+### 经验
+
+这是迁移 VM/LXC 时非常值钱的一步。
+
+如果看到：
+
+* 新 VM 正常回包
+* 旧机器又额外发出一个随机源端口的 UDP 包
+
+基本就能判断：
+
+* 旧机器仍在干预路径
+
+---
+
+## 7.3 必要时在物理口抓包
+
+```bash
+tcpdump -ni <physical-if> host <client-public-ip> and udp
+```
+
+### 用途
+
+确认：
+
+* VM 中看到的回包，是否真的上了物理线
+
+### 经验
+
+虚拟化场景里：
+
+* VM 内看到的“发包”
+* 不一定代表真的到了物理口
+
+---
+
+# 8. nft / ip rule / NAT / tproxy 检查
+
+## 8.1 查看完整规则集
+
+```bash
+nft list ruleset
+# 或你的别名
+nft-lr
+```
+
+### 用途
+
+确认：
+
+* WG 握手流量有没有被 bypass
+* 私网/LAN 流量是否 direct
+* 是否存在意外的透明代理兜底规则
+
+### 核心原则
+
+要区分两类流量：
+
+#### A. WG transport（握手）
+
+应 bypass，不应被透明代理接管
+
+#### B. WG 解密后的业务流量
+
+可以被透明代理或决策平面接管
+
+---
+
+## 8.2 查看策略路由
+
+```bash
+ip rule show
+ip route show table <table_id>
+```
+
+### 用途
+
+确认：
+
+* fwmark 是否正确
+* table 是否存在
+* 流量是否会被送到本地透明代理
+
+### 经验
+
+不要只看 nft，要连同 `ip rule` 和 `route table` 一起看。
+
+---
+
+# 9. 迁移后“客户端能连上 WG，但业务访问异常”的排查
+
+这一类问题说明：
+
+* WG transport 基本正常
+* 但 WG 解密后的客户端业务流量处理异常
+
+此时要区分：
+
+### 9.1 是不是业务流量没被接住
+
+看：
+
+* 本地监听端口
+* 相关进程
+* 规则计数器
+* 运行时日志
+
+### 9.2 是不是业务流量被错误判成 direct
+
+如果日志里看到：
+
+* `sniffed_domain = ...`
+* 但 `route_class = direct`
+* `reason = default_direct`
+
+那说明：
+
+* 业务流量已经进入决策平面
+* 问题不在 WG 本身
+* 问题在策略命中/默认路由
+
+> 这一类检查方法是普适的，不限定某个具体程序。
+
+---
+
+# 10. 运行态显示类问题的排查
+
+## 10.1 不要把人类可读的“多久以前”直接当事实
+
+例如：
+
+* `56 years ago`
+
+这种值更可能是：
+
+* `0`
+* 未初始化
+* epoch 误格式化
+
+### 正确做法
+
+回到底层字段：
+
+```bash
+wg show wg0 dump
+```
+
+看原始数值。
+
+---
+
+## 10.2 显示字段要绑定同一真相源
+
+如果你自己做控制面/管理工具，建议：
+
+* `last_seen`
+* `state`
+* `rx/tx`
+* `endpoint`
+
+尽量来自同一份 runtime snapshot，避免：
+
+* 一个字段来自旧缓存
+* 一个字段来自新 runtime
+* 最后互相打架
+
+---
+
+# 11. 这次迁移中最有效的命令清单
+
+## 11.1 本机健康
+
+```bash
+systemctl status wg-friend@wg0 --no-pager --full
+wg-friend doctor run
+wg show wg0
+wg show wg0 dump
+```
+
+## 11.2 出站路径
+
+```bash
+ip route show
+ip route get <client-public-ip>
+```
+
+## 11.3 包有没有进来、有没有回去
+
+```bash
+tcpdump -ni eth0 udp port 12345 and host <client-public-ip>
+tcpdump -ni vmbr0 host <client-public-ip> and udp
+```
+
+## 11.4 配置是否真的一致
+
+```bash
+wg showconf wg0
+grep '^PrivateKey' /etc/wireguard/wg0.conf | sha256sum
+```
+
+## 11.5 nft / 路由 / 透明代理
+
+```bash
+nft list ruleset
+ip rule show
+ip route show table <table_id>
+```
+
+---
+
+# 12. 本次迁移排障的核心结论
+
+## 已确认的
+
+* 新机器上的 WG 生命周期基本正常
+* peer / PSK / Interface PrivateKey 与旧机器对齐
+* WG 握手流量可以到达新机器
+* 新机器也会回包
+
+## 真正踩中的问题
+
+### 问题 1：新 VM 默认网关仍指向旧 LXC
+
+导致：
+
+* 新 VM 回包被旧机器干预
+* 客户端握手失败
+
+### 问题 2：迁移后业务流量虽然进了决策平面，但默认路由/策略未命中
+
+导致：
+
+* WG 已通
+* 业务访问仍异常
+
+---
+
+# 13. 迁移经验总结
+
+## 原则 1
+
+**迁移网络功能时，不要只迁配置，要一起迁“网络位置”。**
+
+## 原则 2
+
+**默认网关不能半迁移。**
+新软路由接管后，默认出口应直指物理上游。
+
+## 原则 3
+
+**不要只看配置文件，要看 running config。**
+
+## 原则 4
+
+**不要只看服务 active，要抓包看真实路径。**
+
+## 原则 5
+
+**人类可读时间显示不可信时，回到 machine-readable 原始字段。**
+
+---
+
+# 14. 后续可继续增强的方向
+
+* 增加更强的 `doctor`
+
+  * 默认网关异常提示
+  * 运行态 / 渲染态 / 配置态 diff
+* 增加 MTU 探测与建议
+* 增加更高层的 `server summary`
+* 增加更稳定的客户端运行态视图
+* 增加迁移后 drift detection

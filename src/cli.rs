@@ -70,6 +70,13 @@ pub enum ClientCommands {
         interface: Option<String>,
         name: Option<String>,
     },
+    /// Show runtime stats once or as a refreshing watch view.
+    Stats {
+        #[arg(long)]
+        interface: Option<String>,
+        #[arg(long, num_args = 0..=1, default_missing_value = "3", value_name = "SECS")]
+        watch: Option<u64>,
+    },
     /// Add a managed_complete client and write canonical state + export.
     Add {
         interface: Option<String>,
@@ -83,6 +90,25 @@ pub enum ClientCommands {
     },
     /// Import complete local client assets into canonical wg-friend state.
     Import { interface: Option<String> },
+    /// Rename a managed client without changing its key material.
+    Rename {
+        old_name: Option<String>,
+        new_name: Option<String>,
+        #[arg(long)]
+        interface: Option<String>,
+    },
+    /// Disable a client by removing its peer from the active server config while preserving assets.
+    Disable {
+        name: Option<String>,
+        #[arg(long)]
+        interface: Option<String>,
+    },
+    /// Re-enable a previously disabled client from canonical state.
+    Enable {
+        name: Option<String>,
+        #[arg(long)]
+        interface: Option<String>,
+    },
     /// Render an exported client config as a terminal QR code.
     Qrcode {
         interface: Option<String>,
@@ -132,6 +158,11 @@ pub enum DoctorCommands {
     Run { interface: Option<String> },
     /// Validate local prerequisites only.
     Check { interface: Option<String> },
+    /// Print MTU guidance without changing configuration.
+    MtuProbe {
+        #[arg(long)]
+        interface: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

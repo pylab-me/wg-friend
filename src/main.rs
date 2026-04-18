@@ -63,6 +63,9 @@ fn run() -> Result<()> {
             ClientCommands::Show { interface, name } => {
                 commands::client::show(&app, interface, name)
             }
+            ClientCommands::Stats { interface, watch } => {
+                commands::client::stats(&app, interface, watch)
+            }
             ClientCommands::Add {
                 interface,
                 name,
@@ -71,6 +74,17 @@ fn run() -> Result<()> {
                 endpoint,
             } => commands::client::add(&app, interface, name, address, dns, endpoint),
             ClientCommands::Import { interface } => commands::client::import(&app, interface),
+            ClientCommands::Rename {
+                interface,
+                old_name,
+                new_name,
+            } => commands::client::rename(&app, interface, old_name, new_name),
+            ClientCommands::Disable { interface, name } => {
+                commands::client::disable(&app, interface, name)
+            }
+            ClientCommands::Enable { interface, name } => {
+                commands::client::enable(&app, interface, name)
+            }
             ClientCommands::Qrcode { interface, name } => {
                 commands::client::qrcode(&app, interface, name)
             }
@@ -106,6 +120,7 @@ fn run() -> Result<()> {
         Commands::Doctor { command } => match command {
             DoctorCommands::Run { interface } => commands::doctor::run(&app, interface),
             DoctorCommands::Check { interface } => commands::doctor::check(&app, interface),
+            DoctorCommands::MtuProbe { interface } => commands::doctor::mtu_probe(&app, interface),
         },
         Commands::Internal { command } => match command {
             InternalCommands::Preflight { interface } => {

@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 use anyhow::bail;
 use anyhow::Context;
@@ -8,6 +10,7 @@ use qrcode::render::unicode;
 use qrcode::QrCode;
 
 use super::server::resolve_server;
+use crate::command_runner::run;
 use crate::command_runner::run_capture;
 use crate::command_runner::run_capture_with_input;
 use crate::config::AppConfig;
@@ -18,6 +21,7 @@ use crate::state::discover_client_states;
 use crate::state::load_client_state;
 use crate::state::public_key_name_map;
 use crate::state::remove_client_state;
+use crate::state::rename_client_state;
 use crate::state::save_client_state;
 use crate::state::save_server_state;
 use crate::state::write_import_report;
@@ -28,9 +32,13 @@ use crate::ui::kv;
 use crate::ui::Table;
 use crate::ui::Tone;
 use crate::ui::{self};
+use crate::util::base_ip_from_cidr;
+use crate::util::clean_wireguard_config;
 use crate::util::ensure_config_exists;
 use crate::util::ensure_paths;
+use crate::util::interface_exists;
 use crate::util::safe_capture;
+use crate::util::wg_show_ready;
 use crate::wireguard::render_client_config;
 use crate::wireguard::InterfaceData;
 use crate::wireguard::PeerConnectivityState;
@@ -40,7 +48,6 @@ use crate::wireguard::WgRuntimeSummary;
 #[derive(Clone, Debug)]
 struct ClientView {
     name: String,
-    public_key: String,
     virtual_ip: String,
     remote_ip: String,
     rx: String,
@@ -63,66 +70,34 @@ struct RuntimeClientSnapshot {
 pub fn list(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     ensure_config_exists(&iface)?;
-    let runtime = read_runtime(&iface.interface);
-    let states = discover_client_states(app, &iface.interface)?;
-    let items = build_client_views(&states, runtime.as_ref());
+    let items = collect_client_views(app, &iface.interface)?;
+    print_client_snapshot(app, &iface.interface, &items, "clients", false);
+    Ok(())
+}
 
-    ui::print_section("clients");
-    ui::print_kv_rows(&[
-        kv("server", iface.interface.clone()),
-        kv(
-            "state_dir",
-            app.instance_state_dir(&iface.interface)
-                .display()
-                .to_string(),
-        ),
-        kv("managed_complete", items.len().to_string()),
-    ]);
+pub fn stats(app: &AppConfig, interface: Option<String>, watch: Option<u64>) -> Result<()> {
+    let iface = resolve_server(app, interface)?;
+    ensure_config_exists(&iface)?;
+    let interval = Duration::from_secs(watch.unwrap_or(0));
 
-    if items.is_empty() {
-        ui::print_message(
-            "No managed_complete clients were found in canonical state.",
-            Tone::Warn,
-        );
-        ui::print_message(
-            &format!("Try: wg-friend client import {}", iface.interface),
-            Tone::Muted,
-        );
-        return Ok(());
+    loop {
+        let items = collect_client_views(app, &iface.interface)?;
+        if watch.is_some() {
+            print!("\x1b[2J\x1b[H");
+        }
+        print_client_snapshot(app, &iface.interface, &items, "client stats", true);
+        if watch.is_none() {
+            break;
+        }
+        thread::sleep(interval);
     }
-
-    let mut table = Table::new(vec![
-        "name".to_string(),
-        "remote_ip".to_string(),
-        "virtual_ip".to_string(),
-        "rx".to_string(),
-        "tx".to_string(),
-        "last_seen".to_string(),
-        "state".to_string(),
-        "source".to_string(),
-    ]);
-    for item in items {
-        table.push_row(vec![
-            item.name,
-            item.remote_ip,
-            item.virtual_ip,
-            item.rx,
-            item.tx,
-            item.last_seen,
-            ui::status_badge(&item.state),
-            item.source,
-        ]);
-    }
-    ui::print_table(&table);
     Ok(())
 }
 
 pub fn show(app: &AppConfig, interface: Option<String>, name: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     ensure_config_exists(&iface)?;
-    let runtime = read_runtime(&iface.interface);
-    let states = discover_client_states(app, &iface.interface)?;
-    let items = build_client_views(&states, runtime.as_ref());
+    let items = collect_client_views(app, &iface.interface)?;
     let client = resolve_client_view(&iface.interface, &items, name)?;
     let state = load_client_state(app, &iface.interface, &client.name)?;
 
@@ -130,6 +105,7 @@ pub fn show(app: &AppConfig, interface: Option<String>, name: Option<String>) ->
     ui::print_kv_rows(&[
         kv("server", iface.interface.clone()),
         kv("name", state.name),
+        kv("enabled", ui::yes_no(state.enabled)),
         kv("source", state.source),
         kv("public_key", state.public_key),
         kv("virtual_ip", state.address),
@@ -229,7 +205,14 @@ pub fn add(
     let preshared_key = run_capture("wg", &["genpsk"])
         .context("failed to generate preshared key with wg genpsk")?;
 
-    data.add_managed_peer(&name, &public_key, &address, &preshared_key);
+    let peer_allowed_ip = peer_allowed_ip_from_address(&address)?;
+    data.add_managed_peer_with_options(
+        &name,
+        &public_key,
+        &peer_allowed_ip,
+        &preshared_key,
+        Some("25"),
+    );
     data.write_to(&iface.conf_file)?;
 
     let server_public_key = resolve_server_public_key(&iface.interface, &data)?;
@@ -253,6 +236,7 @@ pub fn add(
     let client = ClientState {
         interface: iface.interface.clone(),
         name: name.clone(),
+        enabled: true,
         source: "generated".to_string(),
         public_key: public_key.clone(),
         address: address.clone(),
@@ -266,6 +250,7 @@ pub fn add(
     };
     save_client_state(app, &client)?;
     save_server_state(app, &iface.interface, &data)?;
+    apply_runtime_config_if_ready(&iface.interface, &iface.conf_file)?;
 
     ui::print_section("client created");
     ui::print_kv_rows(&[
@@ -351,43 +336,23 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
         }
 
         let private_key = legacy.private_key().unwrap_or_default().to_string();
-        let public_key =
-            match run_capture_with_input("wg", &["pubkey"], &format!("{private_key}\n")) {
-                Ok(value) => value,
-                Err(error) => {
-                    ignored.push(IgnoredImport {
-                        item: path.display().to_string(),
-                        reason: format!("failed to derive public key: {error}"),
-                    });
-                    continue;
-                }
-            };
+        let public_key = run_capture_with_input("wg", &["pubkey"], &format!("{private_key}\n"))
+            .with_context(|| format!("failed to derive public key for {}", path.display()))?;
 
-        let Some(peer) = data.peer_by_public_key(&public_key) else {
+        let Some(peer) = data.peer_by_public_key(&public_key).cloned() else {
             ignored.push(IgnoredImport {
                 item: path.display().to_string(),
-                reason: "public key not found in server peer set".to_string(),
+                reason: "server peer not found for imported public key".to_string(),
             });
             continue;
         };
+
         let peer_allowed_ips = peer.allowed_ips();
         let peer_preshared_key = peer.values.get("PresharedKey").cloned().unwrap_or_default();
 
-        if let Some(existing) = data.managed_peer(&name) {
-            if existing.public_key() != Some(public_key.as_str()) {
-                ignored.push(IgnoredImport {
-                    item: path.display().to_string(),
-                    reason: format!("name '{}' already maps to another peer", name),
-                });
-                continue;
-            }
-        }
-
-        if let Some(server_peer) = data.peer_by_public_key_mut(&public_key) {
-            if server_peer.managed_name.as_deref() != Some(name.as_str()) {
-                server_peer.managed_name = Some(name.clone());
-                changed = true;
-            }
+        if peer.managed_name.is_none() {
+            data.adopt_peer(&public_key, &name)?;
+            changed = true;
         }
 
         let export_path = app.state_export_path(&iface.interface, &name);
@@ -406,9 +371,10 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
         let client = ClientState {
             interface: iface.interface.clone(),
             name: name.clone(),
+            enabled: true,
             source: "imported".to_string(),
             public_key: public_key.clone(),
-            address: legacy.address().unwrap_or(&peer_allowed_ips).to_string(),
+            address: legacy.address().unwrap_or_default().to_string(),
             dns: legacy.dns().unwrap_or(&app.default_client_dns).to_string(),
             endpoint: legacy
                 .endpoint()
@@ -433,6 +399,9 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
     }
     save_server_state(app, &iface.interface, &data)?;
     write_import_report(app, &iface.interface, &imported, &ignored)?;
+    if changed {
+        apply_runtime_config_if_ready(&iface.interface, &iface.conf_file)?;
+    }
 
     ui::print_section("import result");
     ui::print_kv_rows(&[
@@ -472,6 +441,129 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
     Ok(())
 }
 
+pub fn rename(
+    app: &AppConfig,
+    interface: Option<String>,
+    old_name: Option<String>,
+    new_name: Option<String>,
+) -> Result<()> {
+    let iface = resolve_server(app, interface)?;
+    ensure_config_exists(&iface)?;
+    let items = discover_client_states(app, &iface.interface)?;
+    let old_name = resolve_client_name(&iface.interface, &items, old_name)?;
+    let mut state = load_client_state(app, &iface.interface, &old_name)?;
+    let new_name = match new_name {
+        Some(value) => value,
+        None => ask_text("New client name", Some(&state.name))?,
+    };
+    if new_name == state.name {
+        ui::print_message("Client name is unchanged.", Tone::Warn);
+        return Ok(());
+    }
+    if load_client_state(app, &iface.interface, &new_name).is_ok() {
+        bail!("managed_complete client already exists: {new_name}")
+    }
+
+    let mut data = InterfaceData::parse(&iface.conf_file)?;
+    if state.enabled && data.managed_peer(&state.name).is_some() {
+        data.rename_managed_peer(&state.name, &new_name)?;
+        data.write_to(&iface.conf_file)?;
+        save_server_state(app, &iface.interface, &data)?;
+    }
+
+    rename_client_state(app, &iface.interface, &state.name, &new_name)?;
+    state.name = new_name.clone();
+    state.export_path = app
+        .state_export_path(&iface.interface, &new_name)
+        .display()
+        .to_string();
+    save_client_state(app, &state)?;
+
+    ui::print_section("client rename");
+    ui::print_kv_rows(&[
+        kv("server", iface.interface),
+        kv("old_name", old_name),
+        kv("new_name", new_name),
+        kv("result", ui::status_badge("renamed")),
+    ]);
+    Ok(())
+}
+
+pub fn disable(app: &AppConfig, interface: Option<String>, name: Option<String>) -> Result<()> {
+    let iface = resolve_server(app, interface)?;
+    ensure_config_exists(&iface)?;
+    let mut state = resolve_complete_client_state(app, &iface.interface, name)?;
+    if !state.enabled {
+        ui::print_message("Client is already disabled.", Tone::Warn);
+        return Ok(());
+    }
+
+    let mut data = InterfaceData::parse(&iface.conf_file)?;
+    let removed = data.remove_managed_peer(&state.name);
+    state.enabled = false;
+    save_client_state(app, &state)?;
+    data.write_to(&iface.conf_file)?;
+    save_server_state(app, &iface.interface, &data)?;
+    apply_runtime_config_if_ready(&iface.interface, &iface.conf_file)?;
+
+    ui::print_section("client disable");
+    ui::print_kv_rows(&[
+        kv("server", iface.interface),
+        kv("name", state.name),
+        kv("peer_removed", ui::yes_no(removed)),
+        kv("result", ui::status_badge("disabled")),
+    ]);
+    Ok(())
+}
+
+pub fn enable(app: &AppConfig, interface: Option<String>, name: Option<String>) -> Result<()> {
+    let iface = resolve_server(app, interface)?;
+    ensure_config_exists(&iface)?;
+    let mut state = resolve_complete_client_state(app, &iface.interface, name)?;
+    if state.enabled {
+        ui::print_message("Client is already enabled.", Tone::Warn);
+        return Ok(());
+    }
+
+    let mut data = InterfaceData::parse(&iface.conf_file)?;
+    if data.managed_peer(&state.name).is_some() {
+        bail!(
+            "managed peer already exists in server config: {}",
+            state.name
+        )
+    }
+    if data.peer_by_public_key(&state.public_key).is_some() {
+        bail!("a peer with this public key already exists in server config")
+    }
+    let peer_allowed_ip = peer_allowed_ip_from_state(&state)?;
+    let keepalive = if state.persistent_keepalive.trim().is_empty() {
+        None
+    } else {
+        Some(state.persistent_keepalive.as_str())
+    };
+    data.add_managed_peer_with_options(
+        &state.name,
+        &state.public_key,
+        &peer_allowed_ip,
+        &state.preshared_key,
+        keepalive,
+    );
+    data.write_to(&iface.conf_file)?;
+    save_server_state(app, &iface.interface, &data)?;
+    state.enabled = true;
+    save_client_state(app, &state)?;
+    apply_runtime_config_if_ready(&iface.interface, &iface.conf_file)?;
+
+    ui::print_section("client enable");
+    ui::print_kv_rows(&[
+        kv("server", iface.interface),
+        kv("name", state.name),
+        kv("allowed_ip", peer_allowed_ip),
+        kv("result", ui::status_badge("enabled")),
+    ]);
+    Ok(())
+}
+
 pub fn qrcode(app: &AppConfig, interface: Option<String>, name: Option<String>) -> Result<()> {
     let iface = resolve_server(app, interface)?;
     let state = resolve_complete_client_state(app, &iface.interface, name)?;
@@ -488,6 +580,7 @@ pub fn qrcode(app: &AppConfig, interface: Option<String>, name: Option<String>) 
     ui::print_kv_rows(&[
         kv("server", iface.interface),
         kv("name", state.name.clone()),
+        kv("enabled", ui::yes_no(state.enabled)),
         kv("source", source.display().to_string()),
     ]);
 
@@ -519,6 +612,7 @@ pub fn remove(app: &AppConfig, interface: Option<String>, name: Option<String>) 
     data.write_to(&iface.conf_file)?;
     remove_client_state(app, &iface.interface, &state.name)?;
     save_server_state(app, &iface.interface, &data)?;
+    apply_runtime_config_if_ready(&iface.interface, &iface.conf_file)?;
 
     ui::print_section("client removed");
     ui::print_kv_rows(&[
@@ -566,6 +660,77 @@ pub fn export(
     Ok(())
 }
 
+fn collect_client_views(app: &AppConfig, interface: &str) -> Result<Vec<ClientView>> {
+    let runtime = read_runtime(interface);
+    let states = discover_client_states(app, interface)?;
+    Ok(build_client_views(&states, runtime.as_ref()))
+}
+
+fn print_client_snapshot(
+    app: &AppConfig,
+    interface: &str,
+    items: &[ClientView],
+    title: &str,
+    include_runtime_counts: bool,
+) {
+    ui::print_section(title);
+    let mut header = vec![
+        kv("server", interface.to_string()),
+        kv(
+            "state_dir",
+            app.instance_state_dir(interface).display().to_string(),
+        ),
+        kv("managed_complete", items.len().to_string()),
+    ];
+    if include_runtime_counts {
+        let online = items.iter().filter(|item| item.state == "online").count();
+        let probing = items.iter().filter(|item| item.state == "probing").count();
+        let stale = items.iter().filter(|item| item.state == "stale").count();
+        let disabled = items.iter().filter(|item| item.state == "disabled").count();
+        header.push(kv("online", online.to_string()));
+        header.push(kv("probing", probing.to_string()));
+        header.push(kv("stale", stale.to_string()));
+        header.push(kv("disabled", disabled.to_string()));
+    }
+    ui::print_kv_rows(&header);
+
+    if items.is_empty() {
+        ui::print_message(
+            "No managed_complete clients were found in canonical state.",
+            Tone::Warn,
+        );
+        ui::print_message(
+            &format!("Try: wg-friend client import {}", interface),
+            Tone::Muted,
+        );
+        return;
+    }
+
+    let mut table = Table::new(vec![
+        "name".to_string(),
+        "remote_ip".to_string(),
+        "virtual_ip".to_string(),
+        "rx".to_string(),
+        "tx".to_string(),
+        "last_seen".to_string(),
+        "state".to_string(),
+        "source".to_string(),
+    ]);
+    for item in items {
+        table.push_row(vec![
+            item.name.clone(),
+            item.remote_ip.clone(),
+            item.virtual_ip.clone(),
+            item.rx.clone(),
+            item.tx.clone(),
+            item.last_seen.clone(),
+            ui::status_badge(&item.state),
+            item.source.clone(),
+        ]);
+    }
+    ui::print_table(&table);
+}
+
 fn build_client_views(
     states: &[ClientState],
     runtime: Option<&WgRuntimeSummary>,
@@ -573,14 +738,17 @@ fn build_client_views(
     let mut items = Vec::new();
 
     for state in states {
-        let snapshot = runtime
-            .and_then(|summary| summary.peer_by_public_key(&state.public_key))
-            .map(runtime_snapshot)
-            .unwrap_or_else(default_runtime_snapshot);
+        let snapshot = if state.enabled {
+            runtime
+                .and_then(|summary| summary.peer_by_public_key(&state.public_key))
+                .map(runtime_snapshot)
+                .unwrap_or_else(default_runtime_snapshot)
+        } else {
+            disabled_runtime_snapshot()
+        };
 
         items.push(ClientView {
             name: state.name.clone(),
-            public_key: state.public_key.clone(),
             virtual_ip: state.address.clone(),
             remote_ip: snapshot.remote_ip,
             rx: snapshot.rx,
@@ -617,6 +785,16 @@ fn default_runtime_snapshot() -> RuntimeClientSnapshot {
         tx: "0B".to_string(),
         last_seen: "(not yet)".to_string(),
         state: PeerConnectivityState::Offline.as_str().to_string(),
+    }
+}
+
+fn disabled_runtime_snapshot() -> RuntimeClientSnapshot {
+    RuntimeClientSnapshot {
+        remote_ip: "(none)".to_string(),
+        rx: "0B".to_string(),
+        tx: "0B".to_string(),
+        last_seen: "(disabled)".to_string(),
+        state: PeerConnectivityState::Disabled.as_str().to_string(),
     }
 }
 
@@ -687,6 +865,27 @@ fn resolve_complete_client_state(
     load_client_state(app, interface, &selected)
 }
 
+fn resolve_client_name(
+    interface: &str,
+    items: &[ClientState],
+    name: Option<String>,
+) -> Result<String> {
+    if let Some(name) = name {
+        return Ok(name);
+    }
+    if items.is_empty() {
+        bail!("no managed_complete clients found for {interface}")
+    }
+    if items.len() == 1 {
+        return Ok(items[0].name.clone());
+    }
+    let options = items
+        .iter()
+        .map(|item| item.name.clone())
+        .collect::<Vec<_>>();
+    select_one("Select client", &options)
+}
+
 fn resolve_server_public_key(interface: &str, data: &InterfaceData) -> Result<String> {
     let private_key = data
         .server_private_key()
@@ -695,6 +894,27 @@ fn resolve_server_public_key(interface: &str, data: &InterfaceData) -> Result<St
 
     run_capture_with_input("wg", &["pubkey"], &format!("{private_key}\n"))
         .with_context(|| format!("failed to derive public key for server {interface}"))
+}
+
+fn peer_allowed_ip_from_address(address: &str) -> Result<String> {
+    let ip = base_ip_from_cidr(address)
+        .ok_or_else(|| anyhow::anyhow!("failed to parse client address as IPv4 CIDR: {address}"))?;
+    Ok(format!("{ip}/32"))
+}
+
+fn peer_allowed_ip_from_state(state: &ClientState) -> Result<String> {
+    peer_allowed_ip_from_address(&state.address)
+}
+
+fn apply_runtime_config_if_ready(interface: &str, conf_file: &std::path::Path) -> Result<()> {
+    if !interface_exists(interface) || !wg_show_ready(interface) {
+        return Ok(());
+    }
+    let cleaned = clean_wireguard_config(conf_file)?;
+    let cleaned_path = cleaned.display().to_string();
+    let result = run("wg", &["setconf", interface, &cleaned_path]);
+    let _ = fs::remove_file(&cleaned);
+    result
 }
 
 pub fn canonical_name_map(

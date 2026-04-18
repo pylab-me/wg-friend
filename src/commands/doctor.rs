@@ -8,6 +8,7 @@ use crate::ui::Table;
 use crate::ui::Tone;
 use crate::ui::{self};
 use crate::util::ensure_boringtun_present;
+use crate::util::ensure_config_exists;
 use crate::util::ensure_required_commands;
 use crate::util::ensure_root;
 use crate::util::ensure_tun_device;
@@ -17,6 +18,7 @@ use crate::util::ip_link_is_up;
 use crate::util::parse_ip_brief_addr;
 use crate::util::safe_capture;
 use crate::util::safe_tail;
+use crate::wireguard::InterfaceData;
 use crate::wireguard::WgRuntimeSummary;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -283,6 +285,62 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
         bail!("doctor run found {} failing item(s)", counts.fail);
     }
 
+    Ok(())
+}
+
+pub fn mtu_probe(app: &AppConfig, interface: Option<String>) -> Result<()> {
+    let iface = resolve_server(app, interface)?;
+    ensure_config_exists(&iface)?;
+    let data = InterfaceData::parse(&iface.conf_file)?;
+    let current_mtu = data
+        .interface_value("MTU")
+        .unwrap_or(&app.default_mtu)
+        .to_string();
+
+    ui::print_section("doctor mtu-probe");
+    ui::print_kv_rows(&vec![
+        kv("interface", iface.interface.clone()),
+        kv("config", iface.conf_file.display().to_string()),
+        kv("current_mtu", current_mtu.clone()),
+        kv("mode", "advisory"),
+    ]);
+
+    let mut table = Table::new(vec!["candidate".to_string(), "note".to_string()]);
+    for (mtu, note) in [
+        (
+            "1420",
+            "Default WireGuard starting point for many home NAT paths",
+        ),
+        (
+            "1400",
+            "First conservative step if HTTPS works inconsistently",
+        ),
+        (
+            "1380",
+            "Safer fallback when tunnel works but some sites stall",
+        ),
+        (
+            "1360",
+            "Aggressive fallback for difficult mobile or double-NAT paths",
+        ),
+    ] {
+        let emphasis = if mtu == current_mtu { "current" } else { note };
+        table.push_row(vec![mtu.to_string(), emphasis.to_string()]);
+    }
+    ui::print_table(&table);
+
+    ui::print_message(
+        "This command is advisory only. It does not mutate MTU or claim path-specific certainty.",
+        Tone::Warn,
+    );
+    ui::print_message(
+        "If handshake succeeds but HTTPS or large downloads fail, step down the MTU gradually: 1420 -> 1400 -> 1380 -> 1360.",
+        Tone::Info,
+    );
+    ui::print_message(
+        "After each MTU change, restart the interface and re-test a real client flow.",
+        Tone::Muted,
+    );
     Ok(())
 }
 

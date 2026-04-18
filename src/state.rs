@@ -13,6 +13,7 @@ use crate::wireguard::InterfaceData;
 pub struct ClientState {
     pub interface: String,
     pub name: String,
+    pub enabled: bool,
     pub source: String,
     pub public_key: String,
     pub address: String,
@@ -52,6 +53,7 @@ impl ClientState {
             concat!(
                 "interface = \"{}\"\n",
                 "name = \"{}\"\n",
+                "enabled = {}\n",
                 "source = \"{}\"\n",
                 "public_key = \"{}\"\n",
                 "address = \"{}\"\n",
@@ -65,6 +67,7 @@ impl ClientState {
             ),
             toml_escape(&self.interface),
             toml_escape(&self.name),
+            if self.enabled { "true" } else { "false" },
             toml_escape(&self.source),
             toml_escape(&self.public_key),
             toml_escape(&self.address),
@@ -91,6 +94,7 @@ impl ClientState {
         Ok(Self {
             interface: required_value(&values, "interface", path)?,
             name: required_value(&values, "name", path)?,
+            enabled: values.get("enabled").map(|v| v == "true").unwrap_or(true),
             source: required_value(&values, "source", path)?,
             public_key: required_value(&values, "public_key", path)?,
             address: required_value(&values, "address", path)?,
@@ -258,6 +262,60 @@ pub fn load_client_state(app: &AppConfig, interface: &str, name: &str) -> Result
 
 pub fn save_client_state(app: &AppConfig, client: &ClientState) -> Result<()> {
     client.write_to(&app.state_client_meta_path(&client.interface, &client.name))
+}
+
+pub fn rename_client_state(
+    app: &AppConfig,
+    interface: &str,
+    old_name: &str,
+    new_name: &str,
+) -> Result<()> {
+    let old_meta = app.state_client_meta_path(interface, old_name);
+    let old_export = app.state_export_path(interface, old_name);
+    let new_meta = app.state_client_meta_path(interface, new_name);
+    let new_export = app.state_export_path(interface, new_name);
+
+    if !old_meta.exists() {
+        bail!(
+            "managed_complete client not found for {}: {}",
+            interface,
+            old_name
+        )
+    }
+    if new_meta.exists() {
+        bail!(
+            "managed_complete client already exists for {}: {}",
+            interface,
+            new_name
+        )
+    }
+
+    if let Some(parent) = new_meta.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    if let Some(parent) = new_export.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    fs::rename(&old_meta, &new_meta).with_context(|| {
+        format!(
+            "failed to rename {} to {}",
+            old_meta.display(),
+            new_meta.display()
+        )
+    })?;
+    if old_export.exists() {
+        fs::rename(&old_export, &new_export).with_context(|| {
+            format!(
+                "failed to rename {} to {}",
+                old_export.display(),
+                new_export.display()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 pub fn remove_client_state(app: &AppConfig, interface: &str, name: &str) -> Result<()> {

@@ -55,6 +55,7 @@ pub enum PeerConnectivityState {
     Probing,
     Stale,
     Online,
+    Disabled,
 }
 
 impl PeerConnectivityState {
@@ -64,6 +65,7 @@ impl PeerConnectivityState {
             Self::Probing => "probing",
             Self::Stale => "stale",
             Self::Online => "online",
+            Self::Disabled => "disabled",
         }
     }
 }
@@ -225,16 +227,7 @@ impl InterfaceData {
         address: &str,
         preshared_key: &str,
     ) {
-        let mut values = BTreeMap::new();
-        values.insert("AllowedIPs".to_string(), address.to_string());
-        values.insert("PersistentKeepalive".to_string(), "25".to_string());
-        values.insert("PresharedKey".to_string(), preshared_key.to_string());
-        values.insert("PublicKey".to_string(), public_key.to_string());
-
-        self.peers.push(PeerEntry {
-            managed_name: Some(name.to_string()),
-            values,
-        });
+        self.add_managed_peer_with_options(name, public_key, address, preshared_key, Some("25"));
     }
 
     pub fn adopt_peer(&mut self, public_key: &str, name: &str) -> Result<()> {
@@ -249,6 +242,40 @@ impl InterfaceData {
         }
         peer.managed_name = Some(name.to_string());
         Ok(())
+    }
+
+    pub fn rename_managed_peer(&mut self, old_name: &str, new_name: &str) -> Result<()> {
+        if self.managed_peer(new_name).is_some() {
+            bail!("managed client already exists: {new_name}")
+        }
+        let Some(peer) = self.managed_peer_mut(old_name) else {
+            bail!("managed client not found: {old_name}")
+        };
+        peer.managed_name = Some(new_name.to_string());
+        Ok(())
+    }
+
+    pub fn add_managed_peer_with_options(
+        &mut self,
+        name: &str,
+        public_key: &str,
+        address: &str,
+        preshared_key: &str,
+        persistent_keepalive: Option<&str>,
+    ) {
+        let mut values = BTreeMap::new();
+        values.insert("AllowedIPs".to_string(), address.to_string());
+        values.insert(
+            "PersistentKeepalive".to_string(),
+            persistent_keepalive.unwrap_or("25").to_string(),
+        );
+        values.insert("PresharedKey".to_string(), preshared_key.to_string());
+        values.insert("PublicKey".to_string(), public_key.to_string());
+
+        self.peers.push(PeerEntry {
+            managed_name: Some(name.to_string()),
+            values,
+        });
     }
 
     pub fn remove_managed_peer(&mut self, name: &str) -> bool {
