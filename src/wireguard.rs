@@ -39,6 +39,10 @@ pub struct WgRuntimePeer {
     pub preshared_key: Option<String>,
     pub endpoint: Option<String>,
     pub allowed_ips: Option<String>,
+    /// For BoringTun user-space deployments, `wg show <iface> dump` exposes the
+    /// latest handshake column as a small integer that behaves like an age in
+    /// seconds rather than a Unix epoch timestamp. We keep the historical field
+    /// name to limit churn, but interpret it as an age value downstream.
     pub latest_handshake_epoch: Option<u64>,
     pub transfer_rx_bytes: Option<u64>,
     pub transfer_tx_bytes: Option<u64>,
@@ -408,26 +412,15 @@ impl WgRuntimePeer {
     }
 
     fn handshake_observation(&self) -> HandshakeObservation {
-        const MIN_REASONABLE_HANDSHAKE_EPOCH: u64 = 946684800; // 2000-01-01 UTC
-        const MAX_REASONABLE_HANDSHAKE_AGE_SECS: u64 = 10 * 365 * 24 * 60 * 60; // 10 years
-
+        // On the current BoringTun path we intentionally interpret the dump value
+        // as "seconds since the latest successful handshake", not as a Unix epoch.
+        // A zero value still means "not yet".
         match self.latest_handshake_epoch {
-            Some(epoch) if epoch >= MIN_REASONABLE_HANDSHAKE_EPOCH => match current_unix_secs() {
-                Some(now) if now >= epoch => {
-                    let age_secs = now - epoch;
-                    if age_secs > MAX_REASONABLE_HANDSHAKE_AGE_SECS {
-                        HandshakeObservation::Never
-                    } else {
-                        HandshakeObservation::Seen {
-                            age_secs,
-                            display_text: format_age(age_secs),
-                        }
-                    }
-                }
-                Some(_) => HandshakeObservation::Never,
-                None => HandshakeObservation::Never,
+            Some(0) | None => HandshakeObservation::Never,
+            Some(age_secs) => HandshakeObservation::Seen {
+                age_secs,
+                display_text: format_age(age_secs),
             },
-            _ => HandshakeObservation::Never,
         }
     }
 }
@@ -460,13 +453,6 @@ fn parse_dump_u64(value: Option<&str>) -> Option<u64> {
         return None;
     }
     value.parse::<u64>().ok()
-}
-
-fn current_unix_secs() -> Option<u64> {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_secs())
 }
 
 fn format_age(age_secs: u64) -> String {
