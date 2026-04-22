@@ -143,7 +143,7 @@ jobs:
           ASSET_NAME="${BIN_NAME}-v${VERSION}-${{ matrix.asset_suffix }}.${{ matrix.archive_format }}"
 
           mkdir -p dist "${PACKAGE_ROOT}"
-          cp README.md LICENSE-APACHE LICENSE-MIT "${PACKAGE_ROOT}/"
+          cp README.md LICENSE "${PACKAGE_ROOT}/"
           cp "target/${{ matrix.target }}/release/${BIN_NAME}${{ matrix.bin_ext }}" "${PACKAGE_ROOT}/"
 
           if [[ "${{ matrix.archive_format }}" == "zip" ]]; then

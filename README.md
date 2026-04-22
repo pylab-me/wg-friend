@@ -141,4 +141,4 @@ sudo wg-friend client qrcode wg0 alice
 
 ## License
 
-Dual-licensed under `Apache-2.0`.
+Licensed under `Apache-2.0`.

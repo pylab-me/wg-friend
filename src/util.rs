@@ -331,7 +331,7 @@ fn matches_wg_quick_only_key(line: &str) -> bool {
 
 #[cfg(target_os = "linux")]
 unsafe fn libc_geteuid() -> u32 {
-    extern "C" {
+    unsafe extern "C" {
         fn geteuid() -> u32;
     }
     geteuid()
