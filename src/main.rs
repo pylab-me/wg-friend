@@ -20,8 +20,8 @@ use crate::cli::InternalCommands;
 use crate::cli::ServerCommands;
 use crate::cli::ServiceCommands;
 use crate::config::AppConfig;
-use crate::ui::kv;
 use crate::ui::Tone;
+use crate::ui::kv;
 
 fn main() {
     if let Some(code) = maybe_handle_boundary_hint() {

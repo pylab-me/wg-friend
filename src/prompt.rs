@@ -1,8 +1,8 @@
 use std::io::Write;
 use std::io::{self};
 
-use anyhow::bail;
 use anyhow::Result;
+use anyhow::bail;
 
 pub fn ask_text(label: &str, default: Option<&str>) -> Result<String> {
     loop {

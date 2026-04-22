@@ -138,3 +138,7 @@ sudo wg-friend client qrcode wg0 alice
 - assumes WireGuard configs live under `/etc/wireguard`
 - canonical `wg-friend` client state lives under `/etc/wg-friend`
 - this repository was prepared in an environment without a Rust toolchain, so run local formatting and compile checks before deploying
+
+## License
+
+Dual-licensed under `Apache-2.0`.

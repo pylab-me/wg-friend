@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use anyhow::bail;
 use anyhow::Result;
+use anyhow::bail;
 
 use crate::config::AppConfig;
 use crate::config::InterfaceConfig;
@@ -11,9 +11,9 @@ use crate::prompt::select_one;
 use crate::state::discover_client_states;
 use crate::state::save_server_state;
 use crate::systemd;
-use crate::ui::kv;
 use crate::ui::Table;
 use crate::ui::Tone;
+use crate::ui::kv;
 use crate::ui::{self};
 use crate::util::ensure_config_exists;
 use crate::util::ensure_required_commands;

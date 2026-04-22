@@ -1,9 +1,9 @@
 [package]
 name = "wg-friend"
-version = "0.4.3"
-edition = "2021"
+version = "0.4.4"
+edition = "2024"
 description = "Semantic WireGuard/BoringTun lifecycle and client helper"
-license = "MIT"
+license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1"
@@ -18,4 +18,3 @@ panic = "abort"       # 减小二进制体积，并略微提升性能（不再�
 strip = "symbols"     # 自动移除调试符号，减小库文件体积
 incremental = false    # 关闭增量编译，确保全量优化（CI 环境默认就是 false）
 debug = false          # 确保不携带任何调试信息
-

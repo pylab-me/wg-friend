@@ -3,9 +3,9 @@ use std::fs;
 use std::net::Ipv4Addr;
 use std::path::Path;
 
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::bail;
 
 use crate::util::base_ip_from_cidr;
 use crate::util::ipv4_string;

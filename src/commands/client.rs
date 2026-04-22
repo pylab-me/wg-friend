@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
-use qrcode::render::unicode;
+use anyhow::bail;
 use qrcode::QrCode;
+use qrcode::render::unicode;
 
 use super::server::resolve_server;
 use crate::command_runner::run;
@@ -17,6 +17,9 @@ use crate::config::AppConfig;
 use crate::prompt::ask_text;
 use crate::prompt::ask_yes_no;
 use crate::prompt::select_one;
+use crate::state::ClientState;
+use crate::state::IgnoredImport;
+use crate::state::LegacyClientConfig;
 use crate::state::discover_client_states;
 use crate::state::load_client_state;
 use crate::state::public_key_name_map;
@@ -25,12 +28,9 @@ use crate::state::rename_client_state;
 use crate::state::save_client_state;
 use crate::state::save_server_state;
 use crate::state::write_import_report;
-use crate::state::ClientState;
-use crate::state::IgnoredImport;
-use crate::state::LegacyClientConfig;
-use crate::ui::kv;
 use crate::ui::Table;
 use crate::ui::Tone;
+use crate::ui::kv;
 use crate::ui::{self};
 use crate::util::base_ip_from_cidr;
 use crate::util::clean_wireguard_config;
@@ -39,11 +39,11 @@ use crate::util::ensure_paths;
 use crate::util::interface_exists;
 use crate::util::safe_capture;
 use crate::util::wg_show_ready;
-use crate::wireguard::render_client_config;
 use crate::wireguard::InterfaceData;
 use crate::wireguard::PeerConnectivityState;
 use crate::wireguard::WgRuntimePeer;
 use crate::wireguard::WgRuntimeSummary;
+use crate::wireguard::render_client_config;
 
 #[derive(Clone, Debug)]
 struct ClientView {

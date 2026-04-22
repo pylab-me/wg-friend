@@ -4,9 +4,9 @@ use std::process::Command;
 use std::process::Output;
 use std::process::Stdio;
 
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::bail;
 
 pub fn run(program: impl AsRef<OsStr>, args: &[&str]) -> Result<()> {
     let output = run_output(program.as_ref(), args)?;

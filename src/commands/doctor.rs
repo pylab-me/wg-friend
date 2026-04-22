@@ -1,13 +1,13 @@
-use anyhow::bail;
 use anyhow::Result;
+use anyhow::bail;
 
 use super::server::resolve_server;
 use crate::command_runner::command_exists;
 use crate::command_runner::run_output;
 use crate::config::AppConfig;
-use crate::ui::kv;
 use crate::ui::Table;
 use crate::ui::Tone;
+use crate::ui::kv;
 use crate::ui::{self};
 use crate::util::ensure_boringtun_present;
 use crate::util::ensure_config_exists;

@@ -6,9 +6,9 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::bail;
 
 use crate::command_runner::command_exists;
 use crate::command_runner::run;
