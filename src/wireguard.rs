@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::net::Ipv4Addr;
 use std::path::Path;
 
 use anyhow::Context;
@@ -36,7 +35,6 @@ pub struct WgRuntimeSummary {
 #[derive(Clone, Debug, Default)]
 pub struct WgRuntimePeer {
     pub public_key: String,
-    pub preshared_key: Option<String>,
     pub endpoint: Option<String>,
     pub allowed_ips: Option<String>,
     /// For BoringTun user-space deployments, `wg show <iface> dump` exposes the
@@ -46,7 +44,6 @@ pub struct WgRuntimePeer {
     pub latest_handshake_epoch: Option<u64>,
     pub transfer_rx_bytes: Option<u64>,
     pub transfer_tx_bytes: Option<u64>,
-    pub persistent_keepalive: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -179,16 +176,6 @@ impl InterfaceData {
         self.interface.insert(key.to_string(), value);
     }
 
-    pub fn managed_clients(&self) -> Vec<String> {
-        let mut items = self
-            .peers
-            .iter()
-            .filter_map(|peer| peer.managed_name.clone())
-            .collect::<Vec<_>>();
-        items.sort();
-        items
-    }
-
     pub fn managed_peer(&self, name: &str) -> Option<&PeerEntry> {
         self.peers
             .iter()
@@ -211,23 +198,6 @@ impl InterfaceData {
         self.peers
             .iter_mut()
             .find(|peer| peer.public_key() == Some(public_key))
-    }
-
-    pub fn unmanaged_peers(&self) -> Vec<&PeerEntry> {
-        self.peers
-            .iter()
-            .filter(|peer| peer.managed_name.is_none())
-            .collect::<Vec<_>>()
-    }
-
-    pub fn add_managed_peer(
-        &mut self,
-        name: &str,
-        public_key: &str,
-        address: &str,
-        preshared_key: &str,
-    ) {
-        self.add_managed_peer_with_options(name, public_key, address, preshared_key, Some("25"));
     }
 
     pub fn adopt_peer(&mut self, public_key: &str, name: &str) -> Result<()> {
@@ -338,12 +308,6 @@ impl InterfaceData {
 }
 
 impl PeerEntry {
-    pub fn allowed_ip(&self) -> Option<Ipv4Addr> {
-        self.values
-            .get("AllowedIPs")
-            .and_then(|value| base_ip_from_cidr(value))
-    }
-
     pub fn public_key(&self) -> Option<&str> {
         self.values.get("PublicKey").map(|value| value.as_str())
     }
@@ -389,13 +353,11 @@ impl WgRuntimeSummary {
 
             summary.peers.push(WgRuntimePeer {
                 public_key: public_key.trim().to_string(),
-                preshared_key: normalize_dump_value(fields.get(1).copied()),
                 endpoint: normalize_dump_value(fields.get(2).copied()),
                 allowed_ips: normalize_dump_value(fields.get(3).copied()),
                 latest_handshake_epoch: parse_dump_u64(fields.get(4).copied()),
                 transfer_rx_bytes: parse_dump_u64(fields.get(5).copied()),
                 transfer_tx_bytes: parse_dump_u64(fields.get(6).copied()),
-                persistent_keepalive: normalize_dump_keepalive(fields.get(7).copied()),
             });
         }
 
@@ -466,14 +428,6 @@ fn normalize_dump_value(value: Option<&str>) -> Option<String> {
         return None;
     }
     Some(value.to_string())
-}
-
-fn normalize_dump_keepalive(value: Option<&str>) -> Option<String> {
-    let value = normalize_dump_value(value)?;
-    if value == "0" {
-        return None;
-    }
-    Some(value)
 }
 
 fn parse_dump_u64(value: Option<&str>) -> Option<u64> {

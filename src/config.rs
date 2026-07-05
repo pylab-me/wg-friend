@@ -92,13 +92,6 @@ impl AppConfig {
         format!("{}@{}.service", self.systemd_unit_prefix, interface)
     }
 
-    pub fn legacy_client_file_path(&self, interface: &str, name: &str) -> PathBuf {
-        self.conf_dir
-            .join(&self.client_subdir_name)
-            .join(interface)
-            .join(format!("{name}.conf"))
-    }
-
     pub fn instance_state_dir(&self, interface: &str) -> PathBuf {
         self.state_dir.join("instances").join(interface)
     }

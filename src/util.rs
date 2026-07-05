@@ -16,8 +16,6 @@ use crate::command_runner::run_capture;
 use crate::command_runner::run_output;
 use crate::config::AppConfig;
 use crate::config::InterfaceConfig;
-use crate::ui::KvRow;
-use crate::ui::{self};
 
 const WG_QUICK_ONLY_KEYS: &[&str] = &[
     "Address",
@@ -33,7 +31,6 @@ const WG_QUICK_ONLY_KEYS: &[&str] = &[
 
 #[derive(Clone, Debug, Default)]
 pub struct IpBriefSummary {
-    pub name: String,
     pub state: String,
     pub ipv4: Vec<String>,
     pub ipv6: Vec<String>,
@@ -180,14 +177,6 @@ pub fn extract_config_value(source: &Path, key: &str) -> Result<Option<String>> 
     Ok(None)
 }
 
-pub fn print_header(title: &str) {
-    ui::print_section(title);
-}
-
-pub fn print_kv(key: &str, value: impl AsRef<str>) {
-    ui::print_kv_rows(&[KvRow::new(key, value.as_ref())]);
-}
-
 pub fn safe_capture(program: &str, args: &[&str]) -> String {
     match run_output(program, args) {
         Ok(output) => {
@@ -210,12 +199,6 @@ pub fn safe_tail(path: &Path, lines: usize) -> String {
     let items: Vec<&str> = content.lines().collect();
     let start = items.len().saturating_sub(lines);
     items[start..].join("\n")
-}
-
-pub fn client_file_name_from_path(path: &Path) -> Option<String> {
-    path.file_stem()
-        .and_then(|item| item.to_str())
-        .map(|item| item.to_string())
 }
 
 pub fn base_ip_from_cidr(value: &str) -> Option<Ipv4Addr> {
@@ -291,7 +274,6 @@ pub fn parse_ip_brief_addr(text: &str) -> Option<IpBriefSummary> {
     }
 
     let mut summary = IpBriefSummary {
-        name: parts[0].to_string(),
         state: parts[1].to_ascii_lowercase(),
         ipv4: Vec::new(),
         ipv6: Vec::new(),
@@ -306,13 +288,6 @@ pub fn parse_ip_brief_addr(text: &str) -> Option<IpBriefSummary> {
     }
 
     Some(summary)
-}
-
-pub fn kv_rows_from_pairs(pairs: Vec<(&str, String)>) -> Vec<KvRow> {
-    pairs
-        .into_iter()
-        .map(|(key, value)| KvRow::new(key, value))
-        .collect()
 }
 
 fn matches_wg_quick_only_key(line: &str) -> bool {
@@ -334,7 +309,7 @@ unsafe fn libc_geteuid() -> u32 {
     unsafe extern "C" {
         fn geteuid() -> u32;
     }
-    geteuid()
+    unsafe { geteuid() }
 }
 
 #[cfg(not(target_os = "linux"))]

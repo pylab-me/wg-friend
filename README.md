@@ -7,7 +7,7 @@
 Rather than mirroring the legacy `wg-quick` workflow, it introduces a semantic operating model centered on lifecycle control, complete client assets, diagnostics, and production-grade ergonomics. Local WireGuard assets can be **imported** into canonical `wg-friend` state under `/etc/wg-friend`, allowing historical deployments to evolve into a cleaner and more manageable system without disruptive rewrites.
 
 **Author**  
-Ricky · pylab.me@gmail.com
+Ricky · mail.me@pylab.me
 
 ## Core ideas
 

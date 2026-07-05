@@ -4,21 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: "Build source: crates or git"
+        description: "Build source: git tag/ref is recommended; crates is optional"
         required: true
-        default: "crates"
+        default: "git"
         type: choice
         options:
-          - crates
           - git
+          - crates
       boringtun_cli_version:
-        description: "boringtun-cli crates.io version used when source=crates"
+        description: "boringtun-cli crates.io version used only when source=crates"
         required: true
         default: "0.7.1"
       boringtun_git_ref:
-        description: "BoringTun git ref/tag/branch used when source=git"
+        description: "BoringTun git tag/ref used when source=git"
         required: false
-        default: "main"
+        default: "boringtun-cli-0.7.1"
   push:
     tags:
       - "boringtun-v*"
@@ -48,31 +48,53 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: windows-x64
-            runs_on: windows-latest
-            target: x86_64-pc-windows-msvc
-            bin_ext: .exe
-            archive_format: zip
-            rustflags: -C target-feature=+crt-static
-            wintun_arch: amd64
+          - id: linux-x64
+            runs_on: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            bin_ext: ""
+            archive_format: tar.gz
+            rustflags: "-C target-cpu=x86-64-v3"
+            build_mode: docker
+            docker_image: rust:1-alpine3.24
+
           - id: macos-x64
             runs_on: macos-15-intel
             target: x86_64-apple-darwin
             bin_ext: ""
             archive_format: tar.gz
             rustflags: ""
+            build_mode: host
+            docker_image: ""
           - id: macos-arm64
             runs_on: macos-15
             target: aarch64-apple-darwin
             bin_ext: ""
             archive_format: tar.gz
             rustflags: ""
+            build_mode: host
+            docker_image: ""
+          # Windows is intentionally disabled for now.
+          # Rationale: boringtun-cli 0.7.1 currently fails to compile on
+          # x86_64-pc-windows-msvc in GitHub Actions. Do not keep a red release
+          # workflow for an upstream/runtime boundary issue.
+          #
+          # Re-enable only after an upstream Windows-compatible tag is confirmed:
+          # - id: windows-x64
+          #   runs_on: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   bin_ext: .exe
+          #   archive_format: zip
+          #   rustflags: -C target-feature=+crt-static
+          #   build_mode: host
+          #   docker_image: ""
+          #   wintun_arch: amd64
 
     steps:
       - name: Checkout packaging repo
         uses: actions/checkout@v6
 
-      - name: Install Rust target
+      - name: Install Rust target for host build
+        if: matrix.build_mode == 'host'
         run: rustup target add ${{ matrix.target }}
 
       - name: Resolve source mode
@@ -82,9 +104,9 @@ jobs:
           VERSION="${{ github.event.inputs.boringtun_cli_version }}"
           GIT_REF="${{ github.event.inputs.boringtun_git_ref }}"
 
-          if [[ -z "${SOURCE}" ]]; then SOURCE="crates"; fi
-          if [[ -z "${VERSION}" ]]; then VERSION="0.6.0"; fi
-          if [[ -z "${GIT_REF}" ]]; then GIT_REF="main"; fi
+          if [[ -z "${SOURCE}" ]]; then SOURCE="git"; fi
+          if [[ -z "${VERSION}" ]]; then VERSION="0.7.1"; fi
+          if [[ -z "${GIT_REF}" ]]; then GIT_REF="boringtun-cli-0.7.1"; fi
 
           if [[ "${SOURCE}" != "crates" && "${SOURCE}" != "git" ]]; then
             echo "Unsupported source: ${SOURCE}" >&2
@@ -104,19 +126,39 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
+            .cargo-docker/registry/index/
+            .cargo-docker/registry/cache/
+            .cargo-docker/git/db/
+            stage/
             target/
             upstream/boringtun/target/
-          key: boringtun-${{ runner.os }}-${{ matrix.target }}-${{ steps.meta.outputs.source }}-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.git_ref }}
+          key: boringtun-${{ runner.os }}-${{ matrix.target }}-${{ matrix.build_mode }}-${{ matrix.docker_image }}-${{ steps.meta.outputs.source }}-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.git_ref }}
           restore-keys: |
+            boringtun-${{ runner.os }}-${{ matrix.target }}-${{ matrix.build_mode }}-
             boringtun-${{ runner.os }}-${{ matrix.target }}-
 
-      - name: Build from crates.io
-        if: steps.meta.outputs.source == 'crates'
+      - name: Checkout cloudflare/boringtun git tag/ref
+        if: steps.meta.outputs.source == 'git'
+        run: |
+          rm -rf upstream/boringtun
+          GIT_REF="${{ steps.meta.outputs.git_ref }}"
+
+          git init upstream/boringtun
+          cd upstream/boringtun
+          git remote add origin https://github.com/cloudflare/boringtun.git
+          if ! git fetch --depth 1 origin "${GIT_REF}"; then
+            git fetch --depth 1 origin "refs/tags/${GIT_REF}:refs/tags/${GIT_REF}"
+          fi
+          git checkout --detach FETCH_HEAD
+          cd "${GITHUB_WORKSPACE}"
+
+      - name: Build from crates.io on host
+        if: steps.meta.outputs.source == 'crates' && matrix.build_mode == 'host'
         env:
           CARGO_TERM_COLOR: always
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
-          rm -rf stage
+          rm -rf stage dist-bin
           cargo install boringtun-cli \
             --version "${{ steps.meta.outputs.version }}" \
             --locked \
@@ -126,16 +168,41 @@ jobs:
           mkdir -p dist-bin
           cp "stage/bin/${BIN_NAME}${{ matrix.bin_ext }}" "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
 
-      - name: Build from cloudflare/boringtun git
-        if: steps.meta.outputs.source == 'git'
+      - name: Build from crates.io in Docker
+        if: steps.meta.outputs.source == 'crates' && matrix.build_mode == 'docker'
         env:
           CARGO_TERM_COLOR: always
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
-          rm -rf upstream dist-bin
-          git clone --depth 1 --branch "${{ steps.meta.outputs.git_ref }}" \
-            https://github.com/cloudflare/boringtun.git upstream/boringtun
+          rm -rf stage dist-bin
+          mkdir -p .cargo-docker .docker-home stage dist-bin
 
+          docker run --rm \
+            -e HOME=/work/.docker-home \
+            -e CARGO_HOME=/work/.cargo-docker \
+            -e CARGO_TERM_COLOR=always \
+            -e RUSTFLAGS="${RUSTFLAGS}" \
+            -e CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc \
+            -e CC_x86_64_unknown_linux_musl=cc \
+            -v "${GITHUB_WORKSPACE}:/work" \
+            -w /work \
+            "${{ matrix.docker_image }}" \
+            sh -lc 'set -euo pipefail
+              apk update
+              apk add --no-cache ca-certificates build-base musl-dev perl
+              rustup target add "${{ matrix.target }}"
+              cargo install boringtun-cli --version "${{ steps.meta.outputs.version }}" --locked --target "${{ matrix.target }}" --root /work/stage'
+
+          sudo chown -R "$(id -u):$(id -g)" .cargo-docker .docker-home stage
+          cp "stage/bin/${BIN_NAME}${{ matrix.bin_ext }}" "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
+
+      - name: Build from cloudflare/boringtun git tag/ref on host
+        if: steps.meta.outputs.source == 'git' && matrix.build_mode == 'host'
+        env:
+          CARGO_TERM_COLOR: always
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: |
+          rm -rf dist-bin
           cargo build \
             --manifest-path upstream/boringtun/Cargo.toml \
             --bin boringtun-cli \
@@ -147,70 +214,47 @@ jobs:
           cp "upstream/boringtun/target/${{ matrix.target }}/release/${BIN_NAME}${{ matrix.bin_ext }}" \
             "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
 
+      - name: Build from cloudflare/boringtun git tag/ref in Docker
+        if: steps.meta.outputs.source == 'git' && matrix.build_mode == 'docker'
+        env:
+          CARGO_TERM_COLOR: always
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: |
+          rm -rf dist-bin
+          mkdir -p .cargo-docker .docker-home dist-bin
+
+          docker run --rm \
+            -e CARGO_TERM_COLOR=always \
+            -e RUSTFLAGS="${RUSTFLAGS}" \
+            -e CC_x86_64_unknown_linux_musl=cc \
+            -v "${GITHUB_WORKSPACE}:/work" \
+            -w /work \
+            "rust:1-alpine3.24" \
+            sh -lc 'set -euo pipefail
+              export PATH="/usr/local/cargo/bin:${PATH}"
+          
+              apk add --no-cache ca-certificates build-base musl-dev perl
+          
+              cargo --version
+              rustc --version
+          
+              cargo build \
+                --manifest-path upstream/boringtun/Cargo.toml \
+                --bin boringtun-cli \
+                --release \
+                --locked \
+                --target "x86_64-unknown-linux-musl"
+            '
+
+          sudo chown -R "$(id -u):$(id -g)" upstream
+
+          cp "upstream/boringtun/target/x86_64-unknown-linux-musl/release/${BIN_NAME}" \
+            "dist-bin/${BIN_NAME}"
+
       - name: Smoke check binary
         run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            ./dist-bin/${BIN_NAME}.exe --help >/dev/null
-          else
-            chmod +x "dist-bin/${BIN_NAME}"
-            ./dist-bin/${BIN_NAME} --help >/dev/null
-          fi
-
-      - name: Download and verify Wintun runtime
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $version = "${env:WINTUN_VERSION}"
-          $url = "${env:WINTUN_URL}"
-          $expectedSha256 = "${env:WINTUN_SHA256}".ToLowerInvariant()
-          $arch = "${{ matrix.wintun_arch }}"
-
-          if ([string]::IsNullOrWhiteSpace($arch)) {
-            throw "matrix.wintun_arch is required for Windows packaging"
-          }
-
-          $zipPath = Join-Path $PWD "wintun-$version.zip"
-          $extractRoot = Join-Path $PWD "wintun-extracted"
-          $runtimeRoot = Join-Path $PWD "dist-bin/wintun"
-
-          Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force $runtimeRoot -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
-
-          Write-Host "Downloading Wintun $version from $url"
-          Invoke-WebRequest -Uri $url -OutFile $zipPath
-
-          $actualSha256 = (Get-FileHash -Algorithm SHA256 $zipPath).Hash.ToLowerInvariant()
-          if ($actualSha256 -ne $expectedSha256) {
-            throw "Wintun SHA-256 mismatch. expected=$expectedSha256 actual=$actualSha256"
-          }
-          Write-Host "Wintun SHA-256 verified: $actualSha256"
-
-          Expand-Archive -Path $zipPath -DestinationPath $extractRoot
-
-          $dllSource = Join-Path $extractRoot "wintun/bin/$arch/wintun.dll"
-          $headerSource = Join-Path $extractRoot "wintun/include/wintun.h"
-          if (!(Test-Path $dllSource)) {
-            throw "Expected Wintun DLL not found: $dllSource"
-          }
-
-          Copy-Item $dllSource (Join-Path $runtimeRoot "wintun.dll")
-          if (Test-Path $headerSource) {
-            Copy-Item $headerSource (Join-Path $runtimeRoot "wintun.h")
-          }
-          Copy-Item $zipPath (Join-Path $runtimeRoot "wintun-$version.zip")
-
-          $manifest = @"
-          version=$version
-          url=$url
-          sha256=$expectedSha256
-          selected_arch=$arch
-          selected_dll=wintun/wintun.dll
-          original_archive=wintun/wintun-$version.zip
-          "@
-          $manifest.Trim() | Set-Content -Encoding ascii (Join-Path $runtimeRoot "WINTUN-MANIFEST.txt")
+          chmod +x "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
+          ./dist-bin/${BIN_NAME}${{ matrix.bin_ext }} --help >/dev/null
 
       - name: Package binary
         id: package
@@ -219,7 +263,7 @@ jobs:
           VERSION="${{ steps.meta.outputs.version }}"
           GIT_REF="${{ steps.meta.outputs.git_ref }}"
           if [[ "${SOURCE}" == "crates" ]]; then
-            VERSION_LABEL="v${VERSION}"
+            VERSION_LABEL="crates-v${VERSION}"
           else
             VERSION_LABEL="git-${GIT_REF//\//-}"
           fi
@@ -228,37 +272,23 @@ jobs:
           ASSET_NAME="${BIN_NAME}-${VERSION_LABEL}-${{ matrix.id }}.${{ matrix.archive_format }}"
           mkdir -p "${PACKAGE_ROOT}" dist
           cp "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}" "${PACKAGE_ROOT}/"
-          if [[ "${{ runner.os }}" == "Windows" && -d "dist-bin/wintun" ]]; then
-            cp -R "dist-bin/wintun" "${PACKAGE_ROOT}/"
-            cp "dist-bin/wintun/wintun.dll" "${PACKAGE_ROOT}/wintun.dll"
-          fi
           {
             echo "${BIN_NAME} binary package"
             echo "source=${SOURCE}"
             echo "version=${VERSION}"
             echo "git_ref=${GIT_REF}"
             echo "target=${{ matrix.target }}"
+            echo "build_mode=${{ matrix.build_mode }}"
+            echo "docker_image=${{ matrix.docker_image }}"
+            echo "rustflags=${{ matrix.rustflags }}"
             echo ""
             echo "Runtime note:"
-            echo "- macOS can run boringtun-cli as the upstream userspace WireGuard executable."
-            if [[ "${{ runner.os }}" == "Windows" ]]; then
-              echo "- Windows package includes verified Wintun ${WINTUN_VERSION} runtime assets under ./wintun/."
-              echo "- A convenience copy of wintun.dll is also placed beside boringtun-cli.exe for side-by-side loading."
-              echo "- Wintun archive SHA-256: ${WINTUN_SHA256}"
-            else
-              echo "- Wintun is Windows-only and is not included in macOS artifacts."
-            fi
+            echo "- Linux x64 is built in the official rust:trixie Docker image; musl-tools is installed inside the container to provide x86_64-linux-musl-gcc for ring/cc-rs."
+            echo "- macOS x64/arm64 are built on native GitHub macOS runners."
+            echo "- Windows packaging is intentionally disabled until an upstream Windows-compatible boringtun-cli tag is confirmed."
           } > "${PACKAGE_ROOT}/README.txt"
 
-          if [[ "${{ matrix.archive_format }}" == "zip" ]]; then
-            (
-              cd "${PACKAGE_ROOT}"
-              7z a -tzip "${GITHUB_WORKSPACE}/dist/${ASSET_NAME}" ./*
-            )
-          else
-            tar -C package -czf "dist/${ASSET_NAME}" "${BIN_NAME}"
-          fi
-
+          tar -C package -czf "dist/${ASSET_NAME}" "${BIN_NAME}"
           echo "asset_name=${ASSET_NAME}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload workflow artifact

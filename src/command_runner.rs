@@ -67,10 +67,6 @@ pub fn command_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn shell_capture(script: &str) -> Result<String> {
-    run_capture("sh", &["-lc", script])
-}
-
 fn ensure_success(program: &OsStr, args: &[&str], output: &Output) -> Result<()> {
     if output.status.success() {
         return Ok(());

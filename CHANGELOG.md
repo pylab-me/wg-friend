@@ -1,6 +1,21 @@
 # Changelog
 
-## v0.4.5
+## v0.4.x
+
+### v0.4.6
+- Removed dead command/config/util helpers reported by release builds instead of silencing them with attributes
+- Simplified `IpBriefSummary` to keep only displayed interface state and IP fields
+- Trimmed unused WireGuard runtime dump fields from `WgRuntimePeer`
+- Removed unused peer collection helpers from `InterfaceData` and `PeerEntry` while keeping the active managed-peer API intact
+
+- Fixed BoringTun workflow default Git ref from non-existent `main` to tag/ref-driven builds
+- Defaulted BoringTun packaging to `source=git` with `boringtun-cli-0.7.1` for reproducibility
+- Disabled/commented Windows BoringTun packaging after upstream `boringtun-cli v0.7.1` failed on `x86_64-pc-windows-msvc`
+- Kept macOS x64 and macOS arm64 as the active BoringTun binary targets
+- Updated BoringTun packaging documentation to record the Windows/Wintun re-enable boundary
+
+### v0.4.5
+
 - Added verified Wintun 0.14.1 packaging to the Windows BoringTun artifact
 - Windows BoringTun workflow now downloads `wintun-0.14.1.zip`, verifies SHA-256, extracts `bin/amd64/wintun.dll`, places a side-by-side DLL beside `boringtun-cli.exe`, and packages the original archive plus manifest
 - Added standalone `boringtun-binaries.yml` workflow for Windows x64, macOS x64, and macOS arm64 BoringTun artifacts
@@ -12,7 +27,8 @@
 - Disables unused qrcode default image features to reduce dependency footprint
 - Omits blank `PresharedKey` / `DNS` / `PersistentKeepalive` fields from rendered client configs
 
-## v0.4.x
+### v0.4.4
+
 - Added `client rename`
 - Added `client disable` / `client enable`
 - Added `client stats`, with one-shot output and `--watch` refresh mode
