@@ -19,12 +19,13 @@ on:
         description: "BoringTun git tag/ref used when source=git"
         required: false
         default: "boringtun-cli-0.7.1"
+
   push:
     tags:
-      - "boringtun-v*"
+      - "v*"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,6 +37,7 @@ defaults:
 
 env:
   BIN_NAME: boringtun-cli
+  STAGING_TAG: boringtun-staging
   WINTUN_VERSION: "0.14.1"
   WINTUN_URL: "https://www.wintun.net/builds/wintun-0.14.1.zip"
   WINTUN_SHA256: "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
@@ -65,6 +67,7 @@ jobs:
             rustflags: ""
             build_mode: host
             docker_image: ""
+
           - id: macos-arm64
             runs_on: macos-15
             target: aarch64-apple-darwin
@@ -73,6 +76,7 @@ jobs:
             rustflags: ""
             build_mode: host
             docker_image: ""
+
           # Windows is intentionally disabled for now.
           # Rationale: boringtun-cli 0.7.1 currently fails to compile on
           # x86_64-pc-windows-msvc in GitHub Actions. Do not keep a red release
@@ -100,6 +104,8 @@ jobs:
       - name: Resolve source mode
         id: meta
         run: |
+          set -euo pipefail
+
           SOURCE="${{ github.event.inputs.source }}"
           VERSION="${{ github.event.inputs.boringtun_cli_version }}"
           GIT_REF="${{ github.event.inputs.boringtun_git_ref }}"
@@ -126,9 +132,6 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            .cargo-docker/registry/index/
-            .cargo-docker/registry/cache/
-            .cargo-docker/git/db/
             stage/
             target/
             upstream/boringtun/target/
@@ -140,15 +143,19 @@ jobs:
       - name: Checkout cloudflare/boringtun git tag/ref
         if: steps.meta.outputs.source == 'git'
         run: |
+          set -euo pipefail
+
           rm -rf upstream/boringtun
           GIT_REF="${{ steps.meta.outputs.git_ref }}"
 
           git init upstream/boringtun
           cd upstream/boringtun
           git remote add origin https://github.com/cloudflare/boringtun.git
+
           if ! git fetch --depth 1 origin "${GIT_REF}"; then
             git fetch --depth 1 origin "refs/tags/${GIT_REF}:refs/tags/${GIT_REF}"
           fi
+
           git checkout --detach FETCH_HEAD
           cd "${GITHUB_WORKSPACE}"
 
@@ -158,6 +165,8 @@ jobs:
           CARGO_TERM_COLOR: always
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
+          set -euo pipefail
+
           rm -rf stage dist-bin
           cargo install boringtun-cli \
             --version "${{ steps.meta.outputs.version }}" \
@@ -174,26 +183,34 @@ jobs:
           CARGO_TERM_COLOR: always
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
+          set -euo pipefail
+
           rm -rf stage dist-bin
-          mkdir -p .cargo-docker .docker-home stage dist-bin
+          mkdir -p stage dist-bin
 
           docker run --rm \
-            -e HOME=/work/.docker-home \
-            -e CARGO_HOME=/work/.cargo-docker \
             -e CARGO_TERM_COLOR=always \
             -e RUSTFLAGS="${RUSTFLAGS}" \
-            -e CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc \
             -e CC_x86_64_unknown_linux_musl=cc \
             -v "${GITHUB_WORKSPACE}:/work" \
             -w /work \
             "${{ matrix.docker_image }}" \
             sh -lc 'set -euo pipefail
-              apk update
-              apk add --no-cache ca-certificates build-base musl-dev perl
-              rustup target add "${{ matrix.target }}"
-              cargo install boringtun-cli --version "${{ steps.meta.outputs.version }}" --locked --target "${{ matrix.target }}" --root /work/stage'
+              export PATH="/usr/local/cargo/bin:${PATH}"
 
-          sudo chown -R "$(id -u):$(id -g)" .cargo-docker .docker-home stage
+              apk add --no-cache ca-certificates build-base musl-dev perl
+
+              cargo --version
+              rustc --version
+
+              cargo install boringtun-cli \
+                --version "${{ steps.meta.outputs.version }}" \
+                --locked \
+                --target "${{ matrix.target }}" \
+                --root /work/stage
+            '
+
+          sudo chown -R "$(id -u):$(id -g)" stage
           cp "stage/bin/${BIN_NAME}${{ matrix.bin_ext }}" "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
 
       - name: Build from cloudflare/boringtun git tag/ref on host
@@ -202,6 +219,8 @@ jobs:
           CARGO_TERM_COLOR: always
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
+          set -euo pipefail
+
           rm -rf dist-bin
           cargo build \
             --manifest-path upstream/boringtun/Cargo.toml \
@@ -220,8 +239,10 @@ jobs:
           CARGO_TERM_COLOR: always
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
+          set -euo pipefail
+
           rm -rf dist-bin
-          mkdir -p .cargo-docker .docker-home dist-bin
+          mkdir -p dist-bin
 
           docker run --rm \
             -e CARGO_TERM_COLOR=always \
@@ -229,39 +250,43 @@ jobs:
             -e CC_x86_64_unknown_linux_musl=cc \
             -v "${GITHUB_WORKSPACE}:/work" \
             -w /work \
-            "rust:1-alpine3.24" \
+            "${{ matrix.docker_image }}" \
             sh -lc 'set -euo pipefail
               export PATH="/usr/local/cargo/bin:${PATH}"
-          
+
               apk add --no-cache ca-certificates build-base musl-dev perl
-          
+
               cargo --version
               rustc --version
-          
+
               cargo build \
                 --manifest-path upstream/boringtun/Cargo.toml \
                 --bin boringtun-cli \
                 --release \
                 --locked \
-                --target "x86_64-unknown-linux-musl"
+                --target "${{ matrix.target }}"
             '
 
           sudo chown -R "$(id -u):$(id -g)" upstream
-
-          cp "upstream/boringtun/target/x86_64-unknown-linux-musl/release/${BIN_NAME}" \
-            "dist-bin/${BIN_NAME}"
+          cp "upstream/boringtun/target/${{ matrix.target }}/release/${BIN_NAME}${{ matrix.bin_ext }}" \
+            "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
 
       - name: Smoke check binary
         run: |
+          set -euo pipefail
+
           chmod +x "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
           ./dist-bin/${BIN_NAME}${{ matrix.bin_ext }} --help >/dev/null
 
       - name: Package binary
         id: package
         run: |
+          set -euo pipefail
+
           SOURCE="${{ steps.meta.outputs.source }}"
           VERSION="${{ steps.meta.outputs.version }}"
           GIT_REF="${{ steps.meta.outputs.git_ref }}"
+
           if [[ "${SOURCE}" == "crates" ]]; then
             VERSION_LABEL="crates-v${VERSION}"
           else
@@ -270,8 +295,12 @@ jobs:
 
           PACKAGE_ROOT="package/${BIN_NAME}"
           ASSET_NAME="${BIN_NAME}-${VERSION_LABEL}-${{ matrix.id }}.${{ matrix.archive_format }}"
+
+          rm -rf package dist
           mkdir -p "${PACKAGE_ROOT}" dist
+
           cp "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}" "${PACKAGE_ROOT}/"
+
           {
             echo "${BIN_NAME} binary package"
             echo "source=${SOURCE}"
@@ -283,7 +312,8 @@ jobs:
             echo "rustflags=${{ matrix.rustflags }}"
             echo ""
             echo "Runtime note:"
-            echo "- Linux x64 is built in the official rust:trixie Docker image; musl-tools is installed inside the container to provide x86_64-linux-musl-gcc for ring/cc-rs."
+            echo "- Linux x64 is built inside the official rust:1-alpine3.24 Docker image."
+            echo "- Alpine Rust images use musl by default; do not override CARGO_HOME and do not call rustup target add."
             echo "- macOS x64/arm64 are built on native GitHub macOS runners."
             echo "- Windows packaging is intentionally disabled until an upstream Windows-compatible boringtun-cli tag is confirmed."
           } > "${PACKAGE_ROOT}/README.txt"
@@ -301,12 +331,17 @@ jobs:
 
   release:
     name: release-boringtun-assets
-    #    if: startsWith(github.ref, 'refs/tags/boringtun-v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
@@ -314,12 +349,53 @@ jobs:
           merge-multiple: true
 
       - name: Show assets
-        run: ls -lah release-assets
+        run: |
+          set -euo pipefail
+          ls -lah release-assets
 
-      - name: Upload release assets
+      - name: Resolve release channel
+        id: channel
+        run: |
+          set -euo pipefail
+
+          REF_TYPE="${GITHUB_REF_TYPE:-}"
+          REF_NAME="${GITHUB_REF_NAME:-}"
+
+          if [[ "${REF_TYPE}" == "tag" && "${REF_NAME}" == v* ]]; then
+            echo "channel=release" >> "${GITHUB_OUTPUT}"
+            echo "tag_name=${REF_NAME}" >> "${GITHUB_OUTPUT}"
+            echo "prerelease=false" >> "${GITHUB_OUTPUT}"
+            echo "make_latest=true" >> "${GITHUB_OUTPUT}"
+            echo "release_name=${REF_NAME}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "channel=staging" >> "${GITHUB_OUTPUT}"
+            echo "tag_name=${STAGING_TAG}" >> "${GITHUB_OUTPUT}"
+            echo "prerelease=true" >> "${GITHUB_OUTPUT}"
+            echo "make_latest=false" >> "${GITHUB_OUTPUT}"
+            echo "release_name=staging" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Move staging tag
+        if: steps.channel.outputs.channel == 'staging'
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -f "${{ steps.channel.outputs.tag_name }}" "${GITHUB_SHA}"
+          git push -f origin "refs/tags/${{ steps.channel.outputs.tag_name }}"
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.channel.outputs.tag_name }}
+          name: ${{ steps.channel.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
           files: release-assets/*
           fail_on_unmatched_files: true
+          overwrite_files: true
+          prerelease: ${{ steps.channel.outputs.prerelease }}
+          make_latest: ${{ steps.channel.outputs.make_latest }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
