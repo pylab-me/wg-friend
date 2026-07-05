@@ -4,8 +4,8 @@ use std::time::Duration;
 use std::{fs, thread};
 
 use anyhow::{Context, Result, bail};
-use qrcode::render::unicode;
-use qrcode::{EcLevel, QrCode};
+use fast_qr::ECL;
+use fast_qr::qr::QRBuilder;
 
 use super::server::resolve_server;
 use crate::command_runner::{run, run_capture, run_capture_with_input};
@@ -17,7 +17,7 @@ use crate::state::{
     save_server_state, write_import_report,
 };
 use crate::ui::{
-    Table, Tone, kv, {self},
+    Table, Tone, divider, kv, {self},
 };
 use crate::util::{
     base_ip_from_cidr, clean_wireguard_config, ensure_config_exists, ensure_paths,
@@ -608,7 +608,6 @@ pub fn enable(app: &AppConfig, interface: Option<String>, name: Option<String>) 
 }
 
 pub fn qrcode(app: &AppConfig, interface: Option<String>, name: Option<String>) -> Result<()> {
-    let quiet_zone = false;
     let iface = resolve_server(app, interface)?;
     let state = resolve_complete_client_state(app, &iface.interface, name)?;
     let source = PathBuf::from(&state.export_path);
@@ -622,30 +621,27 @@ pub fn qrcode(app: &AppConfig, interface: Option<String>, name: Option<String>) 
     let qr_payload = compact_client_config_for_qr(&text)
         .with_context(|| format!("failed to compact QR payload from {}", source.display()))?;
     validate_client_export_matches_state(&source, &state, &qr_payload)?;
-    let code = QrCode::with_error_correction_level(qr_payload.as_bytes(), EcLevel::L)
-        .context("failed to build QR code")?;
-
     ui::print_section("client qrcode");
-    ui::print_kv_rows(&[
-        kv("server", iface.interface),
-        kv("name", state.name.clone()),
-        kv("enabled", ui::yes_no(state.enabled)),
-        kv("source", source.display().to_string()),
-        kv("source_bytes", text.len().to_string()),
-        kv("qr_payload_bytes", qr_payload.len().to_string()),
-        kv("qr_modules", code.width().to_string()),
-        kv("error_correction", "L".to_string()),
-        kv("quiet_zone", quiet_zone.to_string()),
-    ]);
 
-    let rendered = code
-        .render::<unicode::Dense1x2>()
-//         .min_dimensions(320, 320)
-        .dark_color(unicode::Dense1x2::Light)
-        .light_color(unicode::Dense1x2::Dark)
-        .quiet_zone(quiet_zone)
-        .build();
-    println!("{rendered}");
+    let code = QRBuilder::new(qr_payload.as_bytes())
+        .ecl(ECL::L)
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to construct QR code: {:?}", e))?;
+
+    let side = code.size;
+    let total_console_width = side * 2 + 8;
+    if total_console_width > 450 {
+        return Err(anyhow::anyhow!(
+            "QR code width ({} ch) exceeds the maximum console limit (450 ch).",
+            total_console_width
+        ));
+    }
+
+    let qr_string = code.to_str();
+    println!("{}", qr_string);
+    println!("{}", divider(64));
+    println!("[INFO] QR code successfully rendered to console (Adaptive Matrix: {side}x{side})");
+
     Ok(())
 }
 
