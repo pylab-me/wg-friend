@@ -1,12 +1,8 @@
 use std::ffi::OsStr;
 use std::io::Write;
-use std::process::Command;
-use std::process::Output;
-use std::process::Stdio;
+use std::process::{Command, Output, Stdio};
 
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::bail;
+use anyhow::{Context, Result, bail};
 
 pub fn run(program: impl AsRef<OsStr>, args: &[&str]) -> Result<()> {
     let output = run_output(program.as_ref(), args)?;
@@ -58,10 +54,7 @@ pub fn run_capture_with_input(
 
 pub fn command_exists(name: &str) -> bool {
     Command::new("sh")
-        .args([
-            "-lc",
-            &format!("command -v {} >/dev/null 2>&1", shell_escape(name)),
-        ])
+        .args(["-lc", &format!("command -v {} >/dev/null 2>&1", shell_escape(name))])
         .status()
         .map(|status| status.success())
         .unwrap_or(false)

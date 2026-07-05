@@ -1,6 +1,7 @@
 use std::env;
-use std::io::IsTerminal;
-use std::io::{self};
+use std::io::{
+    IsTerminal, {self},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tone {
@@ -55,11 +56,7 @@ impl Table {
         }
 
         let cols = self.headers.len();
-        let mut widths = self
-            .headers
-            .iter()
-            .map(|item| display_width(item))
-            .collect::<Vec<_>>();
+        let mut widths = self.headers.iter().map(|item| display_width(item)).collect::<Vec<_>>();
 
         for row in &self.rows {
             for (idx, cell) in row.iter().enumerate().take(cols) {
@@ -78,13 +75,7 @@ impl Table {
         let mut out = String::new();
         out.push_str(&paint(&header, Tone::Accent, true));
         out.push('\n');
-        out.push_str(
-            &widths
-                .iter()
-                .map(|width| "-".repeat(*width))
-                .collect::<Vec<_>>()
-                .join("  "),
-        );
+        out.push_str(&widths.iter().map(|width| "-".repeat(*width)).collect::<Vec<_>>().join("  "));
 
         for row in &self.rows {
             out.push('\n');
@@ -124,11 +115,7 @@ pub fn render_kv_rows(rows: &[KvRow]) -> String {
         return String::new();
     }
 
-    let key_width = rows
-        .iter()
-        .map(|row| display_width(&row.key))
-        .max()
-        .unwrap_or(0);
+    let key_width = rows.iter().map(|row| display_width(&row.key)).max().unwrap_or(0);
     rows.iter()
         .map(|row| format!("{}  {}", pad_right(&row.key, key_width), row.value))
         .collect::<Vec<_>>()

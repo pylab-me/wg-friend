@@ -1,21 +1,12 @@
-use std::fs;
 use std::net::Ipv4Addr;
-use std::path::Path;
-use std::path::PathBuf;
-use std::thread;
-use std::time::Duration;
-use std::time::Instant;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+use std::{fs, thread};
 
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::bail;
+use anyhow::{Context, Result, bail};
 
-use crate::command_runner::command_exists;
-use crate::command_runner::run;
-use crate::command_runner::run_capture;
-use crate::command_runner::run_output;
-use crate::config::AppConfig;
-use crate::config::InterfaceConfig;
+use crate::command_runner::{command_exists, run, run_capture, run_output};
+use crate::config::{AppConfig, InterfaceConfig};
 
 const WG_QUICK_ONLY_KEYS: &[&str] = &[
     "Address",
@@ -237,21 +228,12 @@ pub fn next_ipv4_in_same_subnet(base: Ipv4Addr, used: &[Ipv4Addr]) -> Option<Ipv
 pub fn ip_link_is_up(name: &str) -> bool {
     run_capture("ip", &["link", "show", "dev", name])
         .map(|text| {
-            let first_line = text
-                .lines()
-                .find(|line| !line.trim().is_empty())
-                .unwrap_or_default();
-            let Some(flags) = first_line
-                .split('<')
-                .nth(1)
-                .and_then(|part| part.split('>').next())
+            let first_line = text.lines().find(|line| !line.trim().is_empty()).unwrap_or_default();
+            let Some(flags) = first_line.split('<').nth(1).and_then(|part| part.split('>').next())
             else {
                 return false;
             };
-            flags
-                .split(',')
-                .map(|item| item.trim())
-                .any(|flag| flag == "UP")
+            flags.split(',').map(|item| item.trim()).any(|flag| flag == "UP")
         })
         .unwrap_or(false)
 }

@@ -2,14 +2,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::bail;
+use anyhow::{Context, Result, bail};
 
-use crate::util::base_ip_from_cidr;
-use crate::util::ipv4_string;
-use crate::util::next_ipv4_in_same_subnet;
-use crate::util::split_cidr;
+use crate::util::{base_ip_from_cidr, ipv4_string, next_ipv4_in_same_subnet, split_cidr};
 
 const MANAGED_NAME_PREFIX: &str = "# wg-friend-client:";
 
@@ -177,27 +172,19 @@ impl InterfaceData {
     }
 
     pub fn managed_peer(&self, name: &str) -> Option<&PeerEntry> {
-        self.peers
-            .iter()
-            .find(|peer| peer.managed_name.as_deref() == Some(name))
+        self.peers.iter().find(|peer| peer.managed_name.as_deref() == Some(name))
     }
 
     pub fn managed_peer_mut(&mut self, name: &str) -> Option<&mut PeerEntry> {
-        self.peers
-            .iter_mut()
-            .find(|peer| peer.managed_name.as_deref() == Some(name))
+        self.peers.iter_mut().find(|peer| peer.managed_name.as_deref() == Some(name))
     }
 
     pub fn peer_by_public_key(&self, public_key: &str) -> Option<&PeerEntry> {
-        self.peers
-            .iter()
-            .find(|peer| peer.public_key() == Some(public_key))
+        self.peers.iter().find(|peer| peer.public_key() == Some(public_key))
     }
 
     pub fn peer_by_public_key_mut(&mut self, public_key: &str) -> Option<&mut PeerEntry> {
-        self.peers
-            .iter_mut()
-            .find(|peer| peer.public_key() == Some(public_key))
+        self.peers.iter_mut().find(|peer| peer.public_key() == Some(public_key))
     }
 
     pub fn adopt_peer(&mut self, public_key: &str, name: &str) -> Result<()> {
@@ -252,8 +239,7 @@ impl InterfaceData {
 
     pub fn remove_managed_peer(&mut self, name: &str) -> bool {
         let before = self.peers.len();
-        self.peers
-            .retain(|peer| peer.managed_name.as_deref() != Some(name));
+        self.peers.retain(|peer| peer.managed_name.as_deref() != Some(name));
         self.peers.len() != before
     }
 
@@ -313,10 +299,7 @@ impl PeerEntry {
     }
 
     pub fn allowed_ips(&self) -> String {
-        self.values
-            .get("AllowedIPs")
-            .cloned()
-            .unwrap_or_else(|| "-".to_string())
+        self.values.get("AllowedIPs").cloned().unwrap_or_else(|| "-".to_string())
     }
 }
 
@@ -527,6 +510,5 @@ pub fn render_client_config(
 }
 
 fn parse_managed_name(line: &str) -> Option<&str> {
-    line.strip_prefix(MANAGED_NAME_PREFIX)
-        .map(|value| value.trim())
+    line.strip_prefix(MANAGED_NAME_PREFIX).map(|value| value.trim())
 }

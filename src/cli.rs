@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use clap::Parser;
-use clap::Subcommand;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(name = "wg-friend")]

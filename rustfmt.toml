@@ -1,8 +1,93 @@
-# 常见的 rustfmt.toml 配置示例
-max_width = 100               # 每行最大宽度（默认 100）
-hard_tabs = false             # 是否使用 Tab 缩进
-merge_derives = true          # 是否合并 #[derive(A, B)]
+# rustfmt.toml
+# 目标：nightly rustfmt 下，生产环境稳定、可预测、适合 CI 强制检查
+#
+# 建议配合 rust-toolchain.toml 固定 nightly 版本，避免 rustfmt 输出漂移。
 
-#imports_granularity = "Module" # 合并导入路径
-imports_granularity = "Item"  # LLM, AI最友好
-group_imports = "StdExternalCrate" # 强制开启全局合并排序
+# ========================================
+# Nightly / Unstable
+# ========================================
+
+unstable_features = true
+
+# ========================================
+# 基础格式
+# ========================================
+
+max_width = 100
+tab_spaces = 4
+hard_tabs = false
+newline_style = "Unix"
+
+# Rust 语法解析 edition。
+# cargo fmt 通常会从 Cargo.toml 读取 edition；
+# 这里显式声明，保证直接运行 rustfmt 时也一致。
+edition = "2024"
+
+# Rust 2024 格式风格。
+# 显式写入，避免编辑器 format-on-save 与 CI 结果不一致。
+style_edition = "2024"
+
+# ========================================
+# 宽度启发式
+# ========================================
+
+# Default 会按 max_width 的比例派生 fn_call_width、array_width 等。
+# 这里显式写出关键宽度，让 CI、编辑器、LLM 生成结果更可预测。
+use_small_heuristics = "Default"
+
+fn_call_width = 60
+attr_fn_like_width = 70
+
+# 推荐 80：
+# - 适合 23 寸以上显示器与现代 IDE；
+# - 减少数组、builder pattern、iterator chain 的无意义换行；
+# - 仍受 max_width = 100 约束，不会过度横向膨胀。
+array_width = 80
+chain_width = 80
+
+single_line_if_else_max_width = 50
+single_line_let_else_max_width = 50
+struct_lit_width = 18
+struct_variant_width = 35
+short_array_element_width_threshold = 10
+
+# ========================================
+# 导入与模块排序
+# ========================================
+
+reorder_imports = true
+reorder_modules = true
+
+# Nightly-only。
+# Item：每个 import item 单独成行，diff、code review、LLM/code search 更友好。
+imports_granularity = "Module"
+
+# 分组顺序：
+# 1. std/core/alloc
+# 2. external crates
+# 3. self/super/crate
+group_imports = "StdExternalCrate"
+
+# ========================================
+# 代码结构简化
+# ========================================
+
+merge_derives = true
+use_try_shorthand = true
+use_field_init_shorthand = true
+remove_nested_parens = true
+
+# ========================================
+# 函数与 match 风格
+# ========================================
+
+fn_params_layout = "Tall"
+match_arm_leading_pipes = "Never"
+match_block_trailing_comma = false
+
+# ========================================
+# FFI / ABI
+# ========================================
+
+# 保留 extern "C"，避免 FFI 语义表达变得隐晦。
+force_explicit_abi = true

@@ -77,10 +77,7 @@ impl AppConfig {
     pub fn resolve_interface(&self, interface: Option<String>) -> InterfaceConfig {
         let interface = interface.unwrap_or_else(|| self.default_interface.clone());
         let conf_file = self.conf_dir.join(format!("{interface}.conf"));
-        let client_dir = self
-            .conf_dir
-            .join(&self.client_subdir_name)
-            .join(&interface);
+        let client_dir = self.conf_dir.join(&self.client_subdir_name).join(&interface);
         InterfaceConfig {
             interface,
             conf_file,
@@ -109,18 +106,15 @@ impl AppConfig {
     }
 
     pub fn state_client_meta_path(&self, interface: &str, name: &str) -> PathBuf {
-        self.instance_clients_dir(interface)
-            .join(format!("{name}.toml"))
+        self.instance_clients_dir(interface).join(format!("{name}.toml"))
     }
 
     pub fn state_export_path(&self, interface: &str, name: &str) -> PathBuf {
-        self.instance_exports_dir(interface)
-            .join(format!("{name}.conf"))
+        self.instance_exports_dir(interface).join(format!("{name}.conf"))
     }
 
     pub fn state_import_report_path(&self, interface: &str) -> PathBuf {
-        self.instance_state_dir(interface)
-            .join("import-report.json")
+        self.instance_state_dir(interface).join("import-report.json")
     }
 
     pub fn discover_interfaces(&self) -> Vec<String> {

@@ -1,27 +1,17 @@
-use anyhow::Result;
-use anyhow::bail;
+use anyhow::{Result, bail};
 
 use super::server::resolve_server;
-use crate::command_runner::command_exists;
-use crate::command_runner::run_output;
+use crate::command_runner::{command_exists, run_output};
 use crate::config::AppConfig;
-use crate::ui::Table;
-use crate::ui::Tone;
-use crate::ui::kv;
-use crate::ui::{self};
-use crate::util::ensure_boringtun_present;
-use crate::util::ensure_config_exists;
-use crate::util::ensure_required_commands;
-use crate::util::ensure_root;
-use crate::util::ensure_tun_device;
-use crate::util::interface_exists;
-use crate::util::ip_addr_has_inet;
-use crate::util::ip_link_is_up;
-use crate::util::parse_ip_brief_addr;
-use crate::util::safe_capture;
-use crate::util::safe_tail;
-use crate::wireguard::InterfaceData;
-use crate::wireguard::WgRuntimeSummary;
+use crate::ui::{
+    Table, Tone, kv, {self},
+};
+use crate::util::{
+    ensure_boringtun_present, ensure_config_exists, ensure_required_commands, ensure_root,
+    ensure_tun_device, interface_exists, ip_addr_has_inet, ip_link_is_up, parse_ip_brief_addr,
+    safe_capture, safe_tail,
+};
+use crate::wireguard::{InterfaceData, WgRuntimeSummary};
 
 const ACTIVE_PROBE_DEFAULT_HOST: &str = "1.1.1.1";
 const ACTIVE_PROBE_MIN_PAYLOAD: u16 = 1200;
@@ -354,10 +344,7 @@ pub fn mtu_probe(
     let iface = resolve_server(app, interface)?;
     ensure_config_exists(&iface)?;
     let data = InterfaceData::parse(&iface.conf_file)?;
-    let current_mtu_raw = data
-        .interface_value("MTU")
-        .unwrap_or(&app.default_mtu)
-        .to_string();
+    let current_mtu_raw = data.interface_value("MTU").unwrap_or(&app.default_mtu).to_string();
     let current_mtu = current_mtu_raw.parse::<u16>().ok();
 
     if !active {
@@ -606,26 +593,20 @@ fn format_ping_probe_detail(stdout: &[u8], stderr: &[u8]) -> String {
     let stdout_text = String::from_utf8_lossy(stdout);
     let stderr_text = String::from_utf8_lossy(stderr);
 
-    let interesting = stdout_text
-        .lines()
-        .chain(stderr_text.lines())
-        .map(str::trim)
-        .find(|line| {
-            let normalized = line.to_ascii_lowercase();
-            !line.is_empty()
-                && (normalized.contains("bytes from")
-                    || normalized.contains("packet loss")
-                    || normalized.contains("message too long")
-                    || normalized.contains("frag needed")
-                    || normalized.contains("mtu=")
-                    || normalized.contains("name or service not known")
-                    || normalized.contains("temporary failure in name resolution")
-                    || normalized.contains("destination host unreachable"))
-        });
+    let interesting = stdout_text.lines().chain(stderr_text.lines()).map(str::trim).find(|line| {
+        let normalized = line.to_ascii_lowercase();
+        !line.is_empty()
+            && (normalized.contains("bytes from")
+                || normalized.contains("packet loss")
+                || normalized.contains("message too long")
+                || normalized.contains("frag needed")
+                || normalized.contains("mtu=")
+                || normalized.contains("name or service not known")
+                || normalized.contains("temporary failure in name resolution")
+                || normalized.contains("destination host unreachable"))
+    });
 
-    interesting
-        .unwrap_or("ping returned without a recognized detail")
-        .to_string()
+    interesting.unwrap_or("ping returned without a recognized detail").to_string()
 }
 
 fn compact_probe_detail(detail: &str) -> String {
@@ -643,9 +624,7 @@ fn recommend_wireguard_mtu(estimated_path_mtu: u16, current_mtu: Option<u16>) ->
 
 fn fallback_recommended_mtu(current_mtu: Option<u16>) -> u16 {
     match current_mtu {
-        Some(current) => current
-            .min(WG_FALLBACK_RECOMMENDED_MTU)
-            .max(WG_MIN_RECOMMENDED_MTU),
+        Some(current) => current.min(WG_FALLBACK_RECOMMENDED_MTU).max(WG_MIN_RECOMMENDED_MTU),
         None => WG_FALLBACK_RECOMMENDED_MTU,
     }
 }

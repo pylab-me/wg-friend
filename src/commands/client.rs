@@ -1,53 +1,31 @@
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
-use std::thread;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::{fs, thread};
 
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::bail;
-use qrcode::EcLevel;
-use qrcode::QrCode;
+use anyhow::{Context, Result, bail};
 use qrcode::render::unicode;
+use qrcode::{EcLevel, QrCode};
 
 use super::server::resolve_server;
-use crate::command_runner::run;
-use crate::command_runner::run_capture;
-use crate::command_runner::run_capture_with_input;
+use crate::command_runner::{run, run_capture, run_capture_with_input};
 use crate::config::AppConfig;
-use crate::prompt::ask_text;
-use crate::prompt::ask_yes_no;
-use crate::prompt::select_one;
-use crate::state::ClientState;
-use crate::state::IgnoredImport;
-use crate::state::LegacyClientConfig;
-use crate::state::discover_client_states;
-use crate::state::load_client_state;
-use crate::state::public_key_name_map;
-use crate::state::remove_client_state;
-use crate::state::rename_client_state;
-use crate::state::save_client_state;
-use crate::state::save_server_state;
-use crate::state::write_import_report;
-use crate::ui::Table;
-use crate::ui::Tone;
-use crate::ui::kv;
-use crate::ui::{self};
-use crate::util::base_ip_from_cidr;
-use crate::util::clean_wireguard_config;
-use crate::util::ensure_config_exists;
-use crate::util::ensure_paths;
-use crate::util::interface_exists;
-use crate::util::safe_capture;
-use crate::util::wg_show_ready;
-use crate::wireguard::InterfaceData;
-use crate::wireguard::PeerConnectivityState;
-use crate::wireguard::WgRuntimePeer;
-use crate::wireguard::WgRuntimeSummary;
-use crate::wireguard::render_client_config;
+use crate::prompt::{ask_text, ask_yes_no, select_one};
+use crate::state::{
+    ClientState, IgnoredImport, LegacyClientConfig, discover_client_states, load_client_state,
+    public_key_name_map, remove_client_state, rename_client_state, save_client_state,
+    save_server_state, write_import_report,
+};
+use crate::ui::{
+    Table, Tone, kv, {self},
+};
+use crate::util::{
+    base_ip_from_cidr, clean_wireguard_config, ensure_config_exists, ensure_paths,
+    interface_exists, safe_capture, wg_show_ready,
+};
+use crate::wireguard::{
+    InterfaceData, PeerConnectivityState, WgRuntimePeer, WgRuntimeSummary, render_client_config,
+};
 
 #[derive(Clone, Debug)]
 struct ClientView {
@@ -131,15 +109,11 @@ pub fn show(app: &AppConfig, interface: Option<String>, name: Option<String>) ->
         kv("exportable", ui::yes_no(client.exportable)),
         kv(
             "client_file",
-            app.state_export_path(&iface.interface, &client.name)
-                .display()
-                .to_string(),
+            app.state_export_path(&iface.interface, &client.name).display().to_string(),
         ),
         kv(
             "state_file",
-            app.state_client_meta_path(&iface.interface, &client.name)
-                .display()
-                .to_string(),
+            app.state_client_meta_path(&iface.interface, &client.name).display().to_string(),
         ),
     ]);
     Ok(())
@@ -176,9 +150,7 @@ pub fn add(
         None => ask_text("IPv4 address", Some(&suggested_address))?,
     };
 
-    let dns_hint = data
-        .server_dns_hint()
-        .unwrap_or_else(|| app.default_client_dns.clone());
+    let dns_hint = data.server_dns_hint().unwrap_or_else(|| app.default_client_dns.clone());
     let dns = match dns {
         Some(value) => value,
         None => ask_text("DNS", Some(&dns_hint))?,
@@ -198,9 +170,7 @@ pub fn add(
         kv("endpoint", endpoint.clone()),
         kv(
             "state_dir",
-            app.instance_state_dir(&iface.interface)
-                .display()
-                .to_string(),
+            app.instance_state_dir(&iface.interface).display().to_string(),
         ),
     ]);
 
@@ -300,9 +270,7 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
         ),
         kv(
             "state_dir",
-            app.instance_state_dir(&iface.interface)
-                .display()
-                .to_string(),
+            app.instance_state_dir(&iface.interface).display().to_string(),
         ),
     ]);
 
@@ -387,10 +355,7 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
             continue;
         };
 
-        let name = peer
-            .managed_name
-            .clone()
-            .unwrap_or_else(|| candidate.name.clone());
+        let name = peer.managed_name.clone().unwrap_or_else(|| candidate.name.clone());
         let peer_allowed_ips = peer.allowed_ips();
         let peer_preshared_key = peer.values.get("PresharedKey").cloned().unwrap_or_default();
         let preshared_key = legacy
@@ -402,10 +367,7 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
         let persistent_keepalive = legacy.persistent_keepalive().unwrap_or("25").to_string();
         let address = legacy.address().unwrap_or_default().to_string();
         let dns = legacy.dns().unwrap_or(&app.default_client_dns).to_string();
-        let endpoint = legacy
-            .endpoint()
-            .unwrap_or(&app.default_client_endpoint)
-            .to_string();
+        let endpoint = legacy.endpoint().unwrap_or(&app.default_client_endpoint).to_string();
         let allowed_ips = legacy.allowed_ips().unwrap_or("0.0.0.0/0").to_string();
         let legacy_server_public_key = legacy.server_public_key().unwrap_or_default().to_string();
 
@@ -497,9 +459,7 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
         kv("ignored", ignored.len().to_string()),
         kv(
             "report",
-            app.state_import_report_path(&iface.interface)
-                .display()
-                .to_string(),
+            app.state_import_report_path(&iface.interface).display().to_string(),
         ),
     ]);
 
@@ -508,9 +468,7 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
         for name in &imported {
             table.push_row(vec![
                 name.clone(),
-                app.state_export_path(&iface.interface, name)
-                    .display()
-                    .to_string(),
+                app.state_export_path(&iface.interface, name).display().to_string(),
             ]);
         }
         ui::print_section("imported clients");
@@ -561,10 +519,7 @@ pub fn rename(
 
     rename_client_state(app, &iface.interface, &state.name, &new_name)?;
     state.name = new_name.clone();
-    state.export_path = app
-        .state_export_path(&iface.interface, &new_name)
-        .display()
-        .to_string();
+    state.export_path = app.state_export_path(&iface.interface, &new_name).display().to_string();
     save_client_state(app, &state)?;
 
     ui::print_section("client rename");
@@ -653,6 +608,7 @@ pub fn enable(app: &AppConfig, interface: Option<String>, name: Option<String>) 
 }
 
 pub fn qrcode(app: &AppConfig, interface: Option<String>, name: Option<String>) -> Result<()> {
+    let quiet_zone = false;
     let iface = resolve_server(app, interface)?;
     let state = resolve_complete_client_state(app, &iface.interface, name)?;
     let source = PathBuf::from(&state.export_path);
@@ -679,10 +635,16 @@ pub fn qrcode(app: &AppConfig, interface: Option<String>, name: Option<String>) 
         kv("qr_payload_bytes", qr_payload.len().to_string()),
         kv("qr_modules", code.width().to_string()),
         kv("error_correction", "L".to_string()),
-        kv("quiet_zone", "enabled".to_string()),
+        kv("quiet_zone", quiet_zone.to_string()),
     ]);
 
-    let rendered = code.render::<unicode::Dense1x2>().quiet_zone(true).build();
+    let rendered = code
+        .render::<unicode::Dense1x2>()
+//         .min_dimensions(320, 320)
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
+        .quiet_zone(quiet_zone)
+        .build();
     println!("{rendered}");
     Ok(())
 }
@@ -1047,10 +1009,7 @@ fn build_client_views(
 fn runtime_snapshot(peer: &WgRuntimePeer) -> RuntimeClientSnapshot {
     let connectivity_state = peer.connectivity_state();
     RuntimeClientSnapshot {
-        remote_ip: peer
-            .endpoint
-            .clone()
-            .unwrap_or_else(|| "(none)".to_string()),
+        remote_ip: peer.endpoint.clone().unwrap_or_else(|| "(none)".to_string()),
         rx: peer.rx_bytes_text(),
         tx: peer.tx_bytes_text(),
         last_seen: peer.last_seen_text(),
@@ -1109,10 +1068,7 @@ fn resolve_client_view(
         return Ok(items[0].clone());
     }
 
-    let options = items
-        .iter()
-        .map(|item| item.name.clone())
-        .collect::<Vec<_>>();
+    let options = items.iter().map(|item| item.name.clone()).collect::<Vec<_>>();
     let selected = select_one("Select client", &options)?;
     let Some(item) = items.iter().find(|item| item.name == selected) else {
         bail!("selected client not found: {selected}")
@@ -1137,10 +1093,7 @@ fn resolve_complete_client_state(
         return Ok(items[0].clone());
     }
 
-    let options = items
-        .iter()
-        .map(|item| item.name.clone())
-        .collect::<Vec<_>>();
+    let options = items.iter().map(|item| item.name.clone()).collect::<Vec<_>>();
     let selected = select_one("Select client", &options)?;
     load_client_state(app, interface, &selected)
 }
@@ -1159,10 +1112,7 @@ fn resolve_client_name(
     if items.len() == 1 {
         return Ok(items[0].name.clone());
     }
-    let options = items
-        .iter()
-        .map(|item| item.name.clone())
-        .collect::<Vec<_>>();
+    let options = items.iter().map(|item| item.name.clone()).collect::<Vec<_>>();
     select_one("Select client", &options)
 }
 

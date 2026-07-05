@@ -12,16 +12,12 @@ mod wireguard;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::cli::Cli;
-use crate::cli::ClientCommands;
-use crate::cli::Commands;
-use crate::cli::DoctorCommands;
-use crate::cli::InternalCommands;
-use crate::cli::ServerCommands;
-use crate::cli::ServiceCommands;
+use crate::cli::{
+    Cli, ClientCommands, Commands, DoctorCommands, InternalCommands, ServerCommands,
+    ServiceCommands,
+};
 use crate::config::AppConfig;
-use crate::ui::Tone;
-use crate::ui::kv;
+use crate::ui::{Tone, kv};
 
 fn main() {
     if let Some(code) = maybe_handle_boundary_hint() {

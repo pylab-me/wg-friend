@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::bail;
+use anyhow::{Context, Result, bail};
 
 use crate::config::AppConfig;
 use crate::wireguard::InterfaceData;
@@ -98,14 +96,8 @@ impl ClientState {
             source: required_value(&values, "source", path)?,
             public_key: required_value(&values, "public_key", path)?,
             address: required_value(&values, "address", path)?,
-            dns: values
-                .get("dns")
-                .cloned()
-                .unwrap_or_else(|| "-".to_string()),
-            endpoint: values
-                .get("endpoint")
-                .cloned()
-                .unwrap_or_else(|| "-".to_string()),
+            dns: values.get("dns").cloned().unwrap_or_else(|| "-".to_string()),
+            endpoint: values.get("endpoint").cloned().unwrap_or_else(|| "-".to_string()),
             allowed_ips: values
                 .get("allowed_ips")
                 .cloned()
@@ -349,10 +341,7 @@ pub fn save_server_state(app: &AppConfig, interface: &str, data: &InterfaceData)
             .conf_file
             .display()
             .to_string(),
-        address: data
-            .interface_value("Address")
-            .unwrap_or("<unset>")
-            .to_string(),
+        address: data.interface_value("Address").unwrap_or("<unset>").to_string(),
         listen_port: data.server_listen_port().unwrap_or("<unset>").to_string(),
         mtu: data.interface_value("MTU").unwrap_or("<unset>").to_string(),
     };
@@ -413,11 +402,7 @@ fn parse_simple_toml(text: &str) -> BTreeMap<String, String> {
             continue;
         };
         let key = left.trim().to_string();
-        let value = right
-            .trim()
-            .trim_matches('"')
-            .replace("\\\"", "\"")
-            .replace("\\\\", "\\");
+        let value = right.trim().trim_matches('"').replace("\\\"", "\"").replace("\\\\", "\\");
         values.insert(key, value);
     }
     values
@@ -435,8 +420,5 @@ fn toml_escape(value: &str) -> String {
 }
 
 fn json_escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
+    value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
 }

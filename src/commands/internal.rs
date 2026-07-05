@@ -2,24 +2,16 @@ use std::fs;
 
 use anyhow::Result;
 
-use crate::command_runner::run;
-use crate::command_runner::run_capture;
+use crate::command_runner::{run, run_capture};
 use crate::config::AppConfig;
-use crate::ui::kv;
-use crate::ui::{self};
-use crate::util::clean_wireguard_config;
-use crate::util::ensure_boringtun_present;
-use crate::util::ensure_config_exists;
-use crate::util::ensure_paths;
-use crate::util::ensure_required_commands;
-use crate::util::ensure_root;
-use crate::util::ensure_tun_device;
-use crate::util::extract_config_value;
-use crate::util::interface_exists;
-use crate::util::ip_addr_has_inet;
-use crate::util::ip_link_is_up;
-use crate::util::wait_until;
-use crate::util::wg_show_ready;
+use crate::ui::{
+    kv, {self},
+};
+use crate::util::{
+    clean_wireguard_config, ensure_boringtun_present, ensure_config_exists, ensure_paths,
+    ensure_required_commands, ensure_root, ensure_tun_device, extract_config_value,
+    interface_exists, ip_addr_has_inet, ip_link_is_up, wait_until, wg_show_ready,
+};
 
 pub fn preflight(app: &AppConfig, interface: String) -> Result<()> {
     ensure_root()?;
@@ -59,11 +51,7 @@ pub fn configure(app: &AppConfig, interface: String) -> Result<()> {
     let cleaned = clean_wireguard_config(&iface.conf_file)?;
     run(
         "wg",
-        &[
-            "setconf",
-            &iface.interface,
-            cleaned.to_str().unwrap_or_default(),
-        ],
+        &["setconf", &iface.interface, cleaned.to_str().unwrap_or_default()],
     )?;
 
     let address = extract_config_value(&iface.conf_file, "Address")?
@@ -78,14 +66,7 @@ pub fn configure(app: &AppConfig, interface: String) -> Result<()> {
     if !current_addr.contains(&ip_token) {
         let _ = run(
             "ip",
-            &[
-                "address",
-                "flush",
-                "dev",
-                &iface.interface,
-                "scope",
-                "global",
-            ],
+            &["address", "flush", "dev", &iface.interface, "scope", "global"],
         );
         run("ip", &["address", "add", &address, "dev", &iface.interface])?;
     }

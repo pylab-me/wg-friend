@@ -1,18 +1,16 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::server::resolve_server;
 use crate::config::AppConfig;
 use crate::prompt::ask_yes_no;
 use crate::systemd;
-use crate::ui::Tone;
-use crate::ui::kv;
-use crate::ui::{self};
-use crate::util::ensure_required_commands;
-use crate::util::ensure_root;
+use crate::ui::{
+    Tone, kv, {self},
+};
+use crate::util::{ensure_required_commands, ensure_root};
 
 pub fn install(app: &AppConfig) -> Result<()> {
     ensure_root()?;

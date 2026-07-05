@@ -1,27 +1,19 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
-use anyhow::bail;
+use anyhow::{Result, bail};
 
-use crate::config::AppConfig;
-use crate::config::InterfaceConfig;
-use crate::prompt::ask_text;
-use crate::prompt::ask_yes_no;
-use crate::prompt::select_one;
-use crate::state::discover_client_states;
-use crate::state::save_server_state;
+use crate::config::{AppConfig, InterfaceConfig};
+use crate::prompt::{ask_text, ask_yes_no, select_one};
+use crate::state::{discover_client_states, save_server_state};
 use crate::systemd;
-use crate::ui::Table;
-use crate::ui::Tone;
-use crate::ui::kv;
-use crate::ui::{self};
-use crate::util::ensure_config_exists;
-use crate::util::ensure_required_commands;
-use crate::util::interface_exists;
-use crate::util::parse_ip_brief_addr;
-use crate::util::safe_capture;
-use crate::wireguard::InterfaceData;
-use crate::wireguard::WgRuntimeSummary;
+use crate::ui::{
+    Table, Tone, kv, {self},
+};
+use crate::util::{
+    ensure_config_exists, ensure_required_commands, interface_exists, parse_ip_brief_addr,
+    safe_capture,
+};
+use crate::wireguard::{InterfaceData, WgRuntimeSummary};
 
 pub fn list(app: &AppConfig) -> Result<()> {
     let items = app.discover_interfaces();
@@ -71,9 +63,7 @@ pub fn show(app: &AppConfig, interface: Option<String>) -> Result<()> {
         kv("service", app.service_name(&iface.interface)),
         kv(
             "address",
-            data.interface_value("Address")
-                .unwrap_or("<unset>")
-                .to_string(),
+            data.interface_value("Address").unwrap_or("<unset>").to_string(),
         ),
         kv(
             "listen_port",
@@ -86,9 +76,7 @@ pub fn show(app: &AppConfig, interface: Option<String>) -> Result<()> {
         kv("managed_complete", canonical_clients.len().to_string()),
         kv(
             "state_dir",
-            app.instance_state_dir(&iface.interface)
-                .display()
-                .to_string(),
+            app.instance_state_dir(&iface.interface).display().to_string(),
         ),
     ]);
 
@@ -238,10 +226,7 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
         ),
         kv(
             "listen_port",
-            runtime
-                .listen_port
-                .clone()
-                .unwrap_or_else(|| "-".to_string()),
+            runtime.listen_port.clone().unwrap_or_else(|| "-".to_string()),
         ),
         kv("peer_count", runtime.peers.len().to_string()),
     ]);
@@ -295,18 +280,9 @@ pub fn edit(app: &AppConfig, interface: Option<String>) -> Result<()> {
         kv("config", iface.conf_file.display().to_string()),
     ]);
 
-    let current_address = data
-        .interface_value("Address")
-        .unwrap_or(&app.default_addr)
-        .to_string();
-    let current_mtu = data
-        .interface_value("MTU")
-        .unwrap_or(&app.default_mtu)
-        .to_string();
-    let current_port = data
-        .interface_value("ListenPort")
-        .unwrap_or("51820")
-        .to_string();
+    let current_address = data.interface_value("Address").unwrap_or(&app.default_addr).to_string();
+    let current_mtu = data.interface_value("MTU").unwrap_or(&app.default_mtu).to_string();
+    let current_port = data.interface_value("ListenPort").unwrap_or("51820").to_string();
 
     let next_address = ask_text("Address", Some(&current_address))?;
     let next_mtu = ask_text("MTU", Some(&current_mtu))?;

@@ -1,7 +1,6 @@
 use anyhow::Result;
 
-use crate::command_runner::run;
-use crate::command_runner::run_capture;
+use crate::command_runner::{run, run_capture};
 
 pub fn start(service_name: &str) -> Result<()> {
     run("systemctl", &["start", service_name])
