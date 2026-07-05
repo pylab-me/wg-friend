@@ -7,7 +7,7 @@
 Rather than mirroring the legacy `wg-quick` workflow, it introduces a semantic operating model centered on lifecycle control, complete client assets, diagnostics, and production-grade ergonomics. Local WireGuard assets can be **imported** into canonical `wg-friend` state under `/etc/wg-friend`, allowing historical deployments to evolve into a cleaner and more manageable system without disruptive rewrites.
 
 **Author**  
-Ricky · mail.me@pylab.me
+Ricky · pylab.me@gmail.com
 
 ## Core ideas
 
@@ -87,7 +87,9 @@ A client is considered `managed_complete` only when `wg-friend` can materialize 
 
 `wg-friend client import` scans local WireGuard assets and imports only complete client configs into canonical `wg-friend` state.
 
-The current import source is the local legacy client export directory:
+The import path now starts from `/etc/wireguard` and recursively enumerates local `.conf` files. It content-matches real client exports instead of relying on one fixed legacy directory. A candidate is importable only when it has complete client fields and its `[Peer] PublicKey` matches the current server public key.
+
+The old PiVPN-style directory is still shown in the console as a high-signal source label when matched:
 
 ```text
 /etc/wireguard/clients/<iface>/*.conf
@@ -98,9 +100,10 @@ For each importable client, `wg-friend`:
 - validates the client config is complete
 - derives the client public key from the local private key
 - matches that public key against the server peer set
-- copies the export into `/etc/wg-friend/.../exports/`
+- writes a normalized, QR-ready export into `/etc/wg-friend/.../exports/`
 - writes client metadata into `/etc/wg-friend/.../clients/*.toml`
 - writes an `import-report.json`
+- logs the exact matched source path and whether it came from the legacy directory or recursive content matching
 
 ## Output and UX
 
@@ -130,6 +133,16 @@ sudo wg-friend client import wg0
 sudo wg-friend client list wg0
 sudo wg-friend client qrcode wg0 alice
 ```
+
+## BoringTun binary packaging
+
+A standalone workflow is available at:
+
+```text
+.github/workflows/boringtun-binaries.yml
+```
+
+It builds `boringtun-cli` artifacts for Windows x64, macOS x64, and macOS arm64. See `docs/BORINGTUN_BINARY_ACTIONS.md`.
 
 ## Notes
 

@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -6,6 +9,7 @@ use std::time::Duration;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
+use qrcode::EcLevel;
 use qrcode::QrCode;
 use qrcode::render::unicode;
 
@@ -65,6 +69,13 @@ struct RuntimeClientSnapshot {
     tx: String,
     last_seen: String,
     state: String,
+}
+
+#[derive(Clone, Debug)]
+struct ImportCandidate {
+    path: PathBuf,
+    name: String,
+    source: String,
 }
 
 pub fn list(app: &AppConfig, interface: Option<String>) -> Result<()> {
@@ -222,7 +233,9 @@ pub fn add(
         &dns,
         &server_public_key,
         &endpoint,
+        "0.0.0.0/0",
         &preshared_key,
+        "25",
     );
 
     let export_path = app.state_export_path(&iface.interface, &name);
@@ -270,11 +283,21 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
 
     let mut data = InterfaceData::parse(&iface.conf_file)?;
     let legacy_dir = iface.client_dir.clone();
+    let server_public_key = resolve_server_public_key(&iface.interface, &data)?;
 
     ui::print_section("client import");
     ui::print_kv_rows(&[
         kv("server", iface.interface.clone()),
         kv("legacy_dir", legacy_dir.display().to_string()),
+        kv("scan_root", app.conf_dir.display().to_string()),
+        kv(
+            "scan_strategy",
+            "recursive content match under /etc/wireguard".to_string(),
+        ),
+        kv(
+            "match_rule",
+            "client fields complete + peer PublicKey matches server public key".to_string(),
+        ),
         kv(
             "state_dir",
             app.instance_state_dir(&iface.interface)
@@ -283,44 +306,48 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
         ),
     ]);
 
-    if !legacy_dir.exists() {
+    let candidates = discover_legacy_import_candidates(
+        &app.conf_dir,
+        &legacy_dir,
+        &iface.conf_file,
+        &server_public_key,
+    )?;
+
+    if candidates.is_empty() {
         ui::print_message(
-            "No legacy client export directory was found. Nothing to import.",
+            "No content-matched legacy client configs were found. Nothing to import.",
             Tone::Warn,
         );
+        write_import_report(app, &iface.interface, &[], &[])?;
         return Ok(());
     }
+
+    ui::print_section("matched legacy configs");
+    let mut matched_table = Table::new(vec![
+        "name".to_string(),
+        "source".to_string(),
+        "path".to_string(),
+    ]);
+    for candidate in &candidates {
+        matched_table.push_row(vec![
+            candidate.name.clone(),
+            candidate.source.clone(),
+            candidate.path.display().to_string(),
+        ]);
+    }
+    ui::print_table(&matched_table);
 
     let mut imported = Vec::new();
     let mut ignored = Vec::new();
     let mut changed = false;
+    let mut seen_public_keys = BTreeSet::new();
 
-    let mut entries = fs::read_dir(&legacy_dir)
-        .with_context(|| format!("failed to read {}", legacy_dir.display()))?
-        .flatten()
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    entries.sort();
-
-    for path in entries {
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|item| item.to_str()) != Some("conf") {
-            continue;
-        }
-
-        let name = path
-            .file_stem()
-            .and_then(|item| item.to_str())
-            .map(|item| item.to_string())
-            .unwrap_or_else(|| "client".to_string());
-
-        let legacy = match LegacyClientConfig::parse(&path) {
+    for candidate in candidates {
+        let legacy = match LegacyClientConfig::parse(&candidate.path) {
             Ok(item) => item,
             Err(error) => {
                 ignored.push(IgnoredImport {
-                    item: path.display().to_string(),
+                    item: candidate.path.display().to_string(),
                     reason: error.to_string(),
                 });
                 continue;
@@ -329,7 +356,7 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
 
         if let Err(error) = legacy.ensure_complete() {
             ignored.push(IgnoredImport {
-                item: path.display().to_string(),
+                item: candidate.path.display().to_string(),
                 reason: error.to_string(),
             });
             continue;
@@ -337,18 +364,58 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
 
         let private_key = legacy.private_key().unwrap_or_default().to_string();
         let public_key = run_capture_with_input("wg", &["pubkey"], &format!("{private_key}\n"))
-            .with_context(|| format!("failed to derive public key for {}", path.display()))?;
+            .with_context(|| {
+                format!(
+                    "failed to derive public key for {}",
+                    candidate.path.display()
+                )
+            })?;
+
+        if !seen_public_keys.insert(public_key.clone()) {
+            ignored.push(IgnoredImport {
+                item: candidate.path.display().to_string(),
+                reason: "duplicate client public key already imported in this run".to_string(),
+            });
+            continue;
+        }
 
         let Some(peer) = data.peer_by_public_key(&public_key).cloned() else {
             ignored.push(IgnoredImport {
-                item: path.display().to_string(),
+                item: candidate.path.display().to_string(),
                 reason: "server peer not found for imported public key".to_string(),
             });
             continue;
         };
 
+        let name = peer
+            .managed_name
+            .clone()
+            .unwrap_or_else(|| candidate.name.clone());
         let peer_allowed_ips = peer.allowed_ips();
         let peer_preshared_key = peer.values.get("PresharedKey").cloned().unwrap_or_default();
+        let preshared_key = legacy
+            .preshared_key()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| peer_preshared_key.clone());
+        let persistent_keepalive = legacy.persistent_keepalive().unwrap_or("25").to_string();
+        let address = legacy.address().unwrap_or_default().to_string();
+        let dns = legacy.dns().unwrap_or(&app.default_client_dns).to_string();
+        let endpoint = legacy
+            .endpoint()
+            .unwrap_or(&app.default_client_endpoint)
+            .to_string();
+        let allowed_ips = legacy.allowed_ips().unwrap_or("0.0.0.0/0").to_string();
+        let legacy_server_public_key = legacy.server_public_key().unwrap_or_default().to_string();
+
+        if legacy_server_public_key != server_public_key {
+            ignored.push(IgnoredImport {
+                item: candidate.path.display().to_string(),
+                reason: "legacy peer PublicKey does not match this server".to_string(),
+            });
+            continue;
+        }
 
         if peer.managed_name.is_none() {
             data.adopt_peer(&public_key, &name)?;
@@ -360,38 +427,59 @@ pub fn import(app: &AppConfig, interface: Option<String>) -> Result<()> {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        fs::copy(&path, &export_path).with_context(|| {
-            format!(
-                "failed to copy {} to {}",
-                path.display(),
-                export_path.display()
-            )
-        })?;
 
+        let client_text = render_client_config(
+            &private_key,
+            &address,
+            &dns,
+            &legacy_server_public_key,
+            &endpoint,
+            &allowed_ips,
+            &preshared_key,
+            &persistent_keepalive,
+        );
+        validate_client_export_text(&export_path, &client_text)?;
+        fs::write(&export_path, client_text)
+            .with_context(|| format!("failed to write {}", export_path.display()))?;
+
+        let source_label = candidate.source.clone();
         let client = ClientState {
             interface: iface.interface.clone(),
             name: name.clone(),
             enabled: true,
-            source: "imported".to_string(),
+            source: format!("imported:{source_label}"),
             public_key: public_key.clone(),
-            address: legacy.address().unwrap_or_default().to_string(),
-            dns: legacy.dns().unwrap_or(&app.default_client_dns).to_string(),
-            endpoint: legacy
-                .endpoint()
-                .unwrap_or(&app.default_client_endpoint)
-                .to_string(),
-            allowed_ips: legacy.allowed_ips().unwrap_or("0.0.0.0/0").to_string(),
-            server_public_key: legacy.server_public_key().unwrap_or_default().to_string(),
-            preshared_key: if let Some(value) = legacy.preshared_key() {
-                value.to_string()
-            } else {
-                peer_preshared_key.clone()
-            },
-            persistent_keepalive: legacy.persistent_keepalive().unwrap_or("25").to_string(),
+            address: address.clone(),
+            dns: dns.clone(),
+            endpoint: endpoint.clone(),
+            allowed_ips,
+            server_public_key: legacy_server_public_key,
+            preshared_key,
+            persistent_keepalive,
             export_path: export_path.display().to_string(),
         };
         save_client_state(app, &client)?;
         imported.push(name);
+
+        ui::print_message(
+            &format!(
+                "matched import: {} <= {} ({})",
+                client.name,
+                candidate.path.display(),
+                candidate.source
+            ),
+            Tone::Good,
+        );
+
+        if peer_allowed_ips != peer_allowed_ip_from_address(&address)? {
+            ui::print_message(
+                &format!(
+                    "import warning: server peer AllowedIPs={} but client Address={}",
+                    peer_allowed_ips, address
+                ),
+                Tone::Warn,
+            );
+        }
     }
 
     if changed {
@@ -574,7 +662,12 @@ pub fn qrcode(app: &AppConfig, interface: Option<String>, name: Option<String>) 
 
     let text = fs::read_to_string(&source)
         .with_context(|| format!("failed to read {}", source.display()))?;
-    let code = QrCode::new(text.as_bytes()).context("failed to build QR code")?;
+    validate_client_export_matches_state(&source, &state, &text)?;
+    let qr_payload = compact_client_config_for_qr(&text)
+        .with_context(|| format!("failed to compact QR payload from {}", source.display()))?;
+    validate_client_export_matches_state(&source, &state, &qr_payload)?;
+    let code = QrCode::with_error_correction_level(qr_payload.as_bytes(), EcLevel::L)
+        .context("failed to build QR code")?;
 
     ui::print_section("client qrcode");
     ui::print_kv_rows(&[
@@ -582,9 +675,14 @@ pub fn qrcode(app: &AppConfig, interface: Option<String>, name: Option<String>) 
         kv("name", state.name.clone()),
         kv("enabled", ui::yes_no(state.enabled)),
         kv("source", source.display().to_string()),
+        kv("source_bytes", text.len().to_string()),
+        kv("qr_payload_bytes", qr_payload.len().to_string()),
+        kv("qr_modules", code.width().to_string()),
+        kv("error_correction", "L".to_string()),
+        kv("quiet_zone", "enabled".to_string()),
     ]);
 
-    let rendered = code.render::<unicode::Dense1x2>().quiet_zone(false).build();
+    let rendered = code.render::<unicode::Dense1x2>().quiet_zone(true).build();
     println!("{rendered}");
     Ok(())
 }
@@ -657,6 +755,188 @@ pub fn export(
         kv("source", source.display().to_string()),
         kv("output", output.display().to_string()),
     ]);
+    Ok(())
+}
+
+fn discover_legacy_import_candidates(
+    conf_dir: &Path,
+    legacy_dir: &Path,
+    server_conf_file: &Path,
+    server_public_key: &str,
+) -> Result<Vec<ImportCandidate>> {
+    let mut paths = Vec::new();
+    collect_conf_files(conf_dir, &mut paths)?;
+    paths.sort();
+    paths.dedup();
+
+    let mut names: BTreeMap<String, usize> = BTreeMap::new();
+    let mut candidates = Vec::new();
+
+    for path in paths {
+        if same_path(&path, server_conf_file) {
+            continue;
+        }
+
+        let Ok(legacy) = LegacyClientConfig::parse(&path) else {
+            continue;
+        };
+        if legacy.ensure_complete().is_err() {
+            continue;
+        }
+        if legacy.server_public_key() != Some(server_public_key) {
+            continue;
+        }
+
+        let base_name = client_name_from_path(&path);
+        let name = unique_candidate_name(&base_name, &mut names);
+        let source = if path.starts_with(legacy_dir) {
+            "legacy-dir+content-match"
+        } else {
+            "wireguard-content-match"
+        }
+        .to_string();
+
+        candidates.push(ImportCandidate { path, name, source });
+    }
+
+    Ok(candidates)
+}
+
+fn collect_conf_files(root: &Path, items: &mut Vec<PathBuf>) -> Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    if root.is_file() {
+        if root.extension().and_then(|item| item.to_str()) == Some("conf") {
+            items.push(root.to_path_buf());
+        }
+        return Ok(());
+    }
+
+    let mut entries = fs::read_dir(root)
+        .with_context(|| format!("failed to read {}", root.display()))?
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    entries.sort();
+
+    for path in entries {
+        if path.is_dir() {
+            collect_conf_files(&path, items)?;
+        } else if path.extension().and_then(|item| item.to_str()) == Some("conf") {
+            items.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn client_name_from_path(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|item| item.to_str())
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .unwrap_or("client")
+        .to_string()
+}
+
+fn unique_candidate_name(base: &str, names: &mut BTreeMap<String, usize>) -> String {
+    let counter = names.entry(base.to_string()).or_insert(0);
+    *counter += 1;
+    if *counter == 1 {
+        base.to_string()
+    } else {
+        format!("{base}-{counter}")
+    }
+}
+
+fn compact_client_config_for_qr(text: &str) -> Result<String> {
+    let legacy = LegacyClientConfig::parse_str(text)?;
+    legacy.ensure_complete()?;
+
+    let private_key = legacy.private_key().unwrap_or_default();
+    let address = legacy.address().unwrap_or_default();
+    let dns = legacy.dns().unwrap_or("");
+    let server_public_key = legacy.server_public_key().unwrap_or_default();
+    let endpoint = legacy.endpoint().unwrap_or_default();
+    let allowed_ips = legacy.allowed_ips().unwrap_or("0.0.0.0/0");
+    let preshared_key = legacy.preshared_key().unwrap_or("");
+    let persistent_keepalive = legacy.persistent_keepalive().unwrap_or("25");
+
+    Ok(compact_wireguard_text(&render_client_config(
+        private_key,
+        address,
+        dns,
+        server_public_key,
+        endpoint,
+        allowed_ips,
+        preshared_key,
+        persistent_keepalive,
+    )))
+}
+
+fn compact_wireguard_text(text: &str) -> String {
+    let mut out = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            out.push(line.to_string());
+            continue;
+        }
+        if let Some((left, right)) = line.split_once('=') {
+            let key = left.trim();
+            let value = right.trim();
+            if !key.is_empty() && !value.is_empty() {
+                out.push(format!("{key}={value}"));
+            }
+        }
+    }
+    out.join("\n") + "\n"
+}
+
+fn validate_client_export_text(path: &Path, text: &str) -> Result<()> {
+    let legacy = LegacyClientConfig::parse_str(text)
+        .with_context(|| format!("failed to parse client export {}", path.display()))?;
+    legacy
+        .ensure_complete()
+        .with_context(|| format!("client export is incomplete: {}", path.display()))?;
+    Ok(())
+}
+
+fn validate_client_export_matches_state(
+    path: &Path,
+    state: &ClientState,
+    text: &str,
+) -> Result<()> {
+    let legacy = LegacyClientConfig::parse_str(text)
+        .with_context(|| format!("failed to parse client export {}", path.display()))?;
+    legacy
+        .ensure_complete()
+        .with_context(|| format!("client export is incomplete: {}", path.display()))?;
+
+    if legacy.address() != Some(state.address.as_str()) {
+        bail!(
+            "client export Address does not match canonical state for {}: {}",
+            state.name,
+            path.display()
+        )
+    }
+    if legacy.server_public_key() != Some(state.server_public_key.as_str()) {
+        bail!(
+            "client export server PublicKey does not match canonical state for {}: {}",
+            state.name,
+            path.display()
+        )
+    }
     Ok(())
 }
 

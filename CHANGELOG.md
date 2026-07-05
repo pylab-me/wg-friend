@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.5
+- Added verified Wintun 0.14.1 packaging to the Windows BoringTun artifact
+- Windows BoringTun workflow now downloads `wintun-0.14.1.zip`, verifies SHA-256, extracts `bin/amd64/wintun.dll`, places a side-by-side DLL beside `boringtun-cli.exe`, and packages the original archive plus manifest
+- Added standalone `boringtun-binaries.yml` workflow for Windows x64, macOS x64, and macOS arm64 BoringTun artifacts
+- Changed `client import` to recursively scan `/etc/wireguard` and content-match complete client configs
+- Added explicit import console logs for matched legacy assets and import source strategy
+- Normalized imported client exports instead of blindly copying stale legacy files
+- Validates client export completeness before import and QR rendering
+- Compacts QR payloads, uses low error correction for smaller terminal QR codes, and restores quiet zone for scanner reliability
+- Disables unused qrcode default image features to reduce dependency footprint
+- Omits blank `PresharedKey` / `DNS` / `PersistentKeepalive` fields from rendered client configs
+
 ## v0.4.x
 - Added `client rename`
 - Added `client disable` / `client enable`

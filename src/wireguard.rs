@@ -269,7 +269,9 @@ impl InterfaceData {
             "PersistentKeepalive".to_string(),
             persistent_keepalive.unwrap_or("25").to_string(),
         );
-        values.insert("PresharedKey".to_string(), preshared_key.to_string());
+        if !preshared_key.trim().is_empty() {
+            values.insert("PresharedKey".to_string(), preshared_key.to_string());
+        }
         values.insert("PublicKey".to_string(), public_key.to_string());
 
         self.peers.push(PeerEntry {
@@ -545,11 +547,29 @@ pub fn render_client_config(
     dns: &str,
     server_public_key: &str,
     endpoint: &str,
+    allowed_ips: &str,
     preshared_key: &str,
+    persistent_keepalive: &str,
 ) -> String {
-    format!(
-        "[Interface]\nPrivateKey = {private_key}\nAddress = {address}\nDNS = {dns}\n\n[Peer]\nPublicKey = {server_public_key}\nPresharedKey = {preshared_key}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {endpoint}\nPersistentKeepalive = 25\n"
-    )
+    let mut out = String::new();
+    out.push_str("[Interface]\n");
+    out.push_str(&format!("PrivateKey = {private_key}\n"));
+    out.push_str(&format!("Address = {address}\n"));
+    if !dns.trim().is_empty() {
+        out.push_str(&format!("DNS = {dns}\n"));
+    }
+
+    out.push_str("\n[Peer]\n");
+    out.push_str(&format!("PublicKey = {server_public_key}\n"));
+    if !preshared_key.trim().is_empty() {
+        out.push_str(&format!("PresharedKey = {preshared_key}\n"));
+    }
+    out.push_str(&format!("AllowedIPs = {allowed_ips}\n"));
+    out.push_str(&format!("Endpoint = {endpoint}\n"));
+    if !persistent_keepalive.trim().is_empty() && persistent_keepalive.trim() != "0" {
+        out.push_str(&format!("PersistentKeepalive = {persistent_keepalive}\n"));
+    }
+    out
 }
 
 fn parse_managed_name(line: &str) -> Option<&str> {

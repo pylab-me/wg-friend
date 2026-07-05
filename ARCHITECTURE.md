@@ -80,11 +80,19 @@ Incomplete historical assets stay outside canonical state.
 
 ## Import model
 
-The current import path scans:
+The import path scans `/etc/wireguard` recursively and performs content matching. The former PiVPN-style directory remains a recognized source label, but it is no longer the only import location.
 
 ```text
-/etc/wireguard/clients/<iface>/*.conf
+/etc/wireguard/**/*.conf
 ```
+
+A candidate is accepted only when it looks like a full client export:
+
+- `[Interface] PrivateKey`
+- `[Interface] Address`
+- `[Peer] PublicKey` matching the current server public key
+- `[Peer] AllowedIPs`
+- `[Peer] Endpoint`
 
 For each candidate, `wg-friend`:
 
@@ -92,7 +100,7 @@ For each candidate, `wg-friend`:
 2. validates it is complete
 3. derives the client public key from the client private key
 4. matches that public key against the server peer set
-5. writes canonical state under `/etc/wg-friend`
+5. writes normalized canonical state under `/etc/wg-friend`
 6. emits an `import-report.json`
 
 This allows `/etc/wireguard` to keep evolving while `wg-friend` progressively becomes the preferred management plane.
@@ -167,7 +175,7 @@ Still out of scope in v0.4:
 - Cloudflare-backed distribution itself
 - service-user hardening and capability minimization
 - structured JSON CLI output
-- multi-source import beyond the current local export directory
+- remote import/distribution beyond local `/etc/wireguard` content matching
 
 ## Author
 

@@ -150,6 +150,10 @@ impl LegacyClientConfig {
     pub fn parse(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
+        Self::parse_str(&text)
+    }
+
+    pub fn parse_str(text: &str) -> Result<Self> {
         let mut interface = BTreeMap::new();
         let mut peer = BTreeMap::new();
         let mut current = String::new();
@@ -184,12 +188,10 @@ impl LegacyClientConfig {
 
     pub fn ensure_complete(&self) -> Result<()> {
         for key in ["PrivateKey", "Address"] {
-            if !self.interface.contains_key(key) {
-                bail!("missing [Interface] {}", key)
-            }
+            require_non_empty(&self.interface, "Interface", key)?;
         }
-        if !self.peer.contains_key("PublicKey") {
-            bail!("missing [Peer] PublicKey")
+        for key in ["PublicKey", "AllowedIPs", "Endpoint"] {
+            require_non_empty(&self.peer, "Peer", key)?;
         }
         Ok(())
     }
@@ -391,6 +393,13 @@ pub fn write_import_report(
     }
     fs::write(&path, text).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
+}
+
+fn require_non_empty(values: &BTreeMap<String, String>, section: &str, key: &str) -> Result<()> {
+    match values.get(key).map(|value| value.trim()) {
+        Some(value) if !value.is_empty() => Ok(()),
+        _ => bail!("missing [{}] {}", section, key),
+    }
 }
 
 fn parse_simple_toml(text: &str) -> BTreeMap<String, String> {
