@@ -47,11 +47,11 @@ jobs:
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             RELEASE_TAG="${GITHUB_REF_NAME}"
-            RELEASE_NAME="Release(v${VERSION})"
+            RELEASE_NAME="Release(${VERSION})"
             PRERELEASE="false"
           else
-            RELEASE_TAG="staging"
-            RELEASE_NAME="Staging(v${VERSION})"
+            RELEASE_TAG="rolling"
+            RELEASE_NAME="rolling ${VERSION}"
             PRERELEASE="true"
           fi
 
@@ -129,7 +129,11 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           PACKAGE_ROOT="package/${BIN_NAME}"
-          ASSET_NAME="${BIN_NAME}-v${VERSION}-${{ matrix.asset_suffix }}.${{ matrix.archive_format }}"
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            ASSET_NAME="${BIN_NAME}-rolling-${{ matrix.asset_suffix }}.${{ matrix.archive_format }}"
+          else
+            ASSET_NAME="${BIN_NAME}-v${VERSION}-${{ matrix.asset_suffix }}.${{ matrix.archive_format }}"
+          fi
 
           mkdir -p dist "${PACKAGE_ROOT}"
           cp README.md LICENSE "${PACKAGE_ROOT}/"
@@ -181,7 +185,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Refresh staging tag
+      - name: Refresh rolling tag
         if: needs.prepare.outputs.prerelease == 'true'
         run: |
           git config user.name "github-actions[bot]"
@@ -212,5 +216,6 @@ jobs:
             Resolved version: `v${{ needs.prepare.outputs.version }}`
           files: release-assets/*
           fail_on_unmatched_files: true
+          overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

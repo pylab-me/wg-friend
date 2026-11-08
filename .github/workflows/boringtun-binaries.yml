@@ -37,7 +37,7 @@ defaults:
 
 env:
   BIN_NAME: boringtun-cli
-  STAGING_TAG: boringtun-staging
+  ROLLING_TAG: boringtun-rolling
   WINTUN_VERSION: "0.14.1"
   WINTUN_URL: "https://www.wintun.net/builds/wintun-0.14.1.zip"
   WINTUN_SHA256: "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
@@ -325,7 +325,11 @@ jobs:
           fi
 
           PACKAGE_ROOT="package/${BIN_NAME}"
-          ASSET_NAME="${BIN_NAME}-${VERSION_LABEL}-${{ matrix.id }}.${{ matrix.archive_format }}"
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            ASSET_NAME="${BIN_NAME}-rolling-${{ matrix.id }}.${{ matrix.archive_format }}"
+          else
+            ASSET_NAME="${BIN_NAME}-${VERSION_LABEL}-${{ matrix.id }}.${{ matrix.archive_format }}"
+          fi
 
           rm -rf package dist
           mkdir -p "${PACKAGE_ROOT}" dist
@@ -375,6 +379,7 @@ jobs:
 
   release:
     name: release-boringtun-assets
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -404,23 +409,28 @@ jobs:
 
           REF_TYPE="${GITHUB_REF_TYPE:-}"
           REF_NAME="${GITHUB_REF_NAME:-}"
+          PACKAGE_VERSION="$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)"/\1/p' Cargo.toml | head -n1)"
+          if [[ -z "${PACKAGE_VERSION}" ]]; then
+            echo "Failed to resolve version from Cargo.toml" >&2
+            exit 1
+          fi
 
           if [[ "${REF_TYPE}" == "tag" && "${REF_NAME}" == v* ]]; then
             echo "channel=release" >> "${GITHUB_OUTPUT}"
-            echo "tag_name=${REF_NAME}" >> "${GITHUB_OUTPUT}"
+            echo "tag_name=boringtun-${REF_NAME}" >> "${GITHUB_OUTPUT}"
             echo "prerelease=false" >> "${GITHUB_OUTPUT}"
-            echo "make_latest=true" >> "${GITHUB_OUTPUT}"
-            echo "release_name=${REF_NAME}" >> "${GITHUB_OUTPUT}"
+            echo "make_latest=false" >> "${GITHUB_OUTPUT}"
+            echo "release_name=BoringTun Release(${PACKAGE_VERSION})" >> "${GITHUB_OUTPUT}"
           else
-            echo "channel=staging" >> "${GITHUB_OUTPUT}"
-            echo "tag_name=${STAGING_TAG}" >> "${GITHUB_OUTPUT}"
+            echo "channel=rolling" >> "${GITHUB_OUTPUT}"
+            echo "tag_name=${ROLLING_TAG}" >> "${GITHUB_OUTPUT}"
             echo "prerelease=true" >> "${GITHUB_OUTPUT}"
             echo "make_latest=false" >> "${GITHUB_OUTPUT}"
-            echo "release_name=staging" >> "${GITHUB_OUTPUT}"
+            echo "release_name=BoringTun rolling ${PACKAGE_VERSION}" >> "${GITHUB_OUTPUT}"
           fi
 
-      - name: Move staging tag
-        if: steps.channel.outputs.channel == 'staging'
+      - name: Move rolling tag
+        if: steps.channel.outputs.channel == 'rolling'
         run: |
           set -euo pipefail
 
