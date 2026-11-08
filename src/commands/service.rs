@@ -97,7 +97,7 @@ WantedBy=multi-user.target
     systemd::daemon_reload()?;
 
     ui::print_section("service install");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("unit", unit_path.display().to_string()),
         kv("env", app.env_file.display().to_string()),
         kv("default_interface", app.default_interface.clone()),
@@ -192,7 +192,7 @@ pub fn uninstall(
     systemd::daemon_reload()?;
 
     ui::print_section("service uninstall");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface),
         kv("service", service),
         kv("result", ui::status_badge("removed")),
@@ -228,7 +228,7 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let enabled = systemd::is_enabled(&service).unwrap_or_else(|_| "unknown".to_string());
 
     ui::print_section("service");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("unit", service.clone()),
         kv("active", ui::status_badge(&active)),
         kv("enabled", ui::status_badge(&enabled)),
@@ -247,10 +247,7 @@ pub fn enable(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let service = app.service_name(&iface.interface);
     systemd::enable(&service)?;
     ui::print_section("service enable");
-    ui::print_kv_rows(&vec![
-        kv("unit", service),
-        kv("result", ui::status_badge("enabled")),
-    ]);
+    ui::print_kv_rows(&[kv("unit", service), kv("result", ui::status_badge("enabled"))]);
     Ok(())
 }
 
@@ -261,10 +258,7 @@ pub fn disable(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let service = app.service_name(&iface.interface);
     systemd::disable(&service)?;
     ui::print_section("service disable");
-    ui::print_kv_rows(&vec![
-        kv("unit", service),
-        kv("result", ui::status_badge("disabled")),
-    ]);
+    ui::print_kv_rows(&[kv("unit", service), kv("result", ui::status_badge("disabled"))]);
     Ok(())
 }
 

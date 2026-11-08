@@ -24,7 +24,7 @@ pub fn preflight(app: &AppConfig, interface: String) -> Result<()> {
     ensure_config_exists(&iface)?;
 
     ui::print_section("preflight");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface),
         kv("config", iface.conf_file.display().to_string()),
         kv("client_dir", iface.client_dir.display().to_string()),
@@ -77,7 +77,7 @@ pub fn configure(app: &AppConfig, interface: String) -> Result<()> {
     let _ = fs::remove_file(cleaned);
 
     ui::print_section("configure");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface),
         kv("address", address),
         kv("mtu", mtu),
@@ -103,10 +103,7 @@ pub fn verify(app: &AppConfig, interface: String) -> Result<()> {
     })?;
 
     ui::print_section("verify");
-    ui::print_kv_rows(&vec![
-        kv("interface", iface.interface),
-        kv("result", ui::status_badge("ready")),
-    ]);
+    ui::print_kv_rows(&[kv("interface", iface.interface), kv("result", ui::status_badge("ready"))]);
     Ok(())
 }
 
@@ -121,9 +118,6 @@ pub fn cleanup(app: &AppConfig, interface: String) -> Result<()> {
     }
 
     ui::print_section("cleanup");
-    ui::print_kv_rows(&vec![
-        kv("interface", iface.interface),
-        kv("result", ui::status_badge("ok")),
-    ]);
+    ui::print_kv_rows(&[kv("interface", iface.interface), kv("result", ui::status_badge("ok"))]);
     Ok(())
 }

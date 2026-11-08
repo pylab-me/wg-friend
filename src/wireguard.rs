@@ -92,10 +92,10 @@ impl InterfaceData {
             }
 
             if line.starts_with('[') && line.ends_with(']') {
-                if current_section.as_deref() == Some("Peer") {
-                    if let Some(peer) = current_peer.take() {
-                        peers.push(peer);
-                    }
+                if current_section.as_deref() == Some("Peer")
+                    && let Some(peer) = current_peer.take()
+                {
+                    peers.push(peer);
                 }
 
                 let section = line.trim_matches(&['[', ']'][..]).to_string();
@@ -128,10 +128,10 @@ impl InterfaceData {
             }
         }
 
-        if current_section.as_deref() == Some("Peer") {
-            if let Some(peer) = current_peer.take() {
-                peers.push(peer);
-            }
+        if current_section.as_deref() == Some("Peer")
+            && let Some(peer) = current_peer.take()
+        {
+            peers.push(peer);
         }
 
         if interface.is_empty() {
@@ -327,7 +327,7 @@ impl WgRuntimeSummary {
                 continue;
             }
 
-            let Some(public_key) = fields.get(0).copied() else {
+            let Some(public_key) = fields.first().copied() else {
                 continue;
             };
             if public_key.trim().is_empty() {

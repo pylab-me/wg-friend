@@ -204,16 +204,14 @@ fn strip_ansi(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut chars = value.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            if matches!(chars.peek(), Some(&'[')) {
-                chars.next();
-                while let Some(next) = chars.next() {
-                    if ('@'..='~').contains(&next) {
-                        break;
-                    }
+        if ch == '\u{1b}' && matches!(chars.peek(), Some(&'[')) {
+            chars.next();
+            for next in chars.by_ref() {
+                if ('@'..='~').contains(&next) {
+                    break;
                 }
-                continue;
             }
+            continue;
         }
         out.push(ch);
     }
@@ -246,10 +244,10 @@ fn colors_enabled() -> bool {
         return false;
     }
 
-    if let Some(value) = env::var_os("CLICOLOR_FORCE") {
-        if value.to_string_lossy() != "0" {
-            return true;
-        }
+    if let Some(value) = env::var_os("CLICOLOR_FORCE")
+        && value.to_string_lossy() != "0"
+    {
+        return true;
     }
 
     io::stdout().is_terminal() && env::var_os("TERM").is_some()

@@ -57,7 +57,7 @@ pub fn show(app: &AppConfig, interface: Option<String>) -> Result<()> {
 
     ui::print_section("server");
     let canonical_clients = discover_client_states(app, &iface.interface).unwrap_or_default();
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface.clone()),
         kv("config", iface.conf_file.display().to_string()),
         kv("service", app.service_name(&iface.interface)),
@@ -109,7 +109,7 @@ pub fn up(app: &AppConfig, interface: Option<String>) -> Result<()> {
     systemd::start(&service)?;
 
     ui::print_section("server up");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface.clone()),
         kv("service", service.clone()),
         kv("result", ui::status_badge("started")),
@@ -126,7 +126,7 @@ pub fn down(app: &AppConfig, interface: Option<String>) -> Result<()> {
     systemd::stop(&service)?;
 
     ui::print_section("server down");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface),
         kv("service", service),
         kv("result", ui::status_badge("stopped")),
@@ -142,7 +142,7 @@ pub fn restart(app: &AppConfig, interface: Option<String>) -> Result<()> {
     systemd::restart(&service)?;
 
     ui::print_section("server restart");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface.clone()),
         kv("service", service.clone()),
         kv("result", ui::status_badge("restarted")),
@@ -158,7 +158,7 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let enabled = systemd::is_enabled(&service).unwrap_or_else(|_| "unknown".to_string());
 
     ui::print_section("service");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("unit", service.clone()),
         kv("active", ui::status_badge(&active)),
         kv("enabled", ui::status_badge(&enabled)),
@@ -195,7 +195,7 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
         })
         .unwrap_or_else(|| "-".to_string());
 
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("name", iface.interface.clone()),
         kv("config", iface.conf_file.display().to_string()),
         kv("present", ui::yes_no(present)),
@@ -215,7 +215,7 @@ pub fn status(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let config_data = InterfaceData::parse(&iface.conf_file).ok();
     let canonical_names =
         crate::commands::client::canonical_name_map(app, &iface.interface).unwrap_or_default();
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv(
             "interface",
             if runtime.interface.is_empty() {
@@ -275,7 +275,7 @@ pub fn edit(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let mut data = InterfaceData::parse(&iface.conf_file)?;
 
     ui::print_section("server edit");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface.clone()),
         kv("config", iface.conf_file.display().to_string()),
     ]);
@@ -289,7 +289,7 @@ pub fn edit(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let next_port = ask_text("ListenPort", Some(&current_port))?;
 
     ui::print_section("pending changes");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("address", next_address.clone()),
         kv("mtu", next_mtu.clone()),
         kv("listen_port", next_port.clone()),

@@ -153,7 +153,7 @@ pub fn check(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let counts = print_doctor_checks("doctor check", &checks);
 
     ui::print_section("doctor summary");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", iface.interface),
         kv("config", iface.conf_file.display().to_string()),
         kv("boringtun", app.boringtun_bin.display().to_string()),
@@ -194,7 +194,7 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
         crate::systemd::is_active(&service).unwrap_or_else(|_| "unknown".to_string());
 
     ui::print_section("doctor summary");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("service", service.clone()),
         kv("interface", iface.interface.clone()),
         kv("config", iface.conf_file.display().to_string()),
@@ -218,7 +218,7 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
     let counts = print_doctor_checks("doctor checks", &checks);
 
     ui::print_section("interface snapshot");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv(
             "state",
             ip_brief
@@ -263,7 +263,7 @@ pub fn run(app: &AppConfig, interface: Option<String>) -> Result<()> {
     ]);
 
     ui::print_section("doctor verdict");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("checks", counts.total().to_string()),
         kv("pass", ui::badge(&counts.pass.to_string(), Tone::Good)),
         kv("warn", ui::badge(&counts.warn.to_string(), Tone::Warn)),
@@ -373,7 +373,7 @@ pub fn mtu_probe(
 
 fn print_advisory_mtu_probe(interface: &str, config_path: &str, current_mtu: &str) {
     ui::print_section("doctor mtu-probe");
-    ui::print_kv_rows(&vec![
+    ui::print_kv_rows(&[
         kv("interface", interface.to_string()),
         kv("config", config_path.to_string()),
         kv("current_mtu", current_mtu.to_string()),

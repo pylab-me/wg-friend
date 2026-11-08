@@ -77,10 +77,11 @@ pub fn select_one(label: &str, items: &[String]) -> Result<String> {
             bail!("cancelled by user")
         }
 
-        if let Ok(index) = input.parse::<usize>() {
-            if index >= 1 && index <= items.len() {
-                return Ok(items[index - 1].clone());
-            }
+        if let Ok(index) = input.parse::<usize>()
+            && index >= 1
+            && index <= items.len()
+        {
+            return Ok(items[index - 1].clone());
         }
 
         if let Some(item) = items.iter().find(|item| item.as_str() == input) {
