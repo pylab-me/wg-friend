@@ -20,6 +20,7 @@ concurrency:
 
 env:
   BIN_NAME: wg-friend
+  RUST_TOOLCHAIN: 1.100.0-beta
 
 jobs:
   prepare:
@@ -32,7 +33,7 @@ jobs:
       prerelease: ${{ steps.release_meta.outputs.prerelease }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Resolve release metadata
         id: release_meta
@@ -65,6 +66,8 @@ jobs:
     name: build-${{ matrix.id }}
     needs: prepare
     runs-on: ${{ matrix.runs_on }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
     strategy:
       fail-fast: false
       matrix:
@@ -92,48 +95,34 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ${{ matrix.apt_packages }}
-          sudo rm -rf /var/lib/apt/lists/*
-
-      - name: Install Rust target
-        run: rustup target add ${{ matrix.target }}
-
-      - name: Generate Cargo cache manifest
-        run: |
-          mkdir -p .ci
-
-          sed -E '
-            /^\[package\]/,/^\[/ {
-              /^[[:space:]]*version[[:space:]]*=/d
-            }
-            /^[[:space:]]*canonical_version[[:space:]]*=/d
-          ' Cargo.toml > .ci/Cargo.cache.toml
-
-          cat .ci/Cargo.cache.toml
-
-      - name: Rust Cache
-        uses: actions/cache@v5
+      - name: Set up Rust toolchain
+        id: setup_rust
+        uses: pylab-me/esg-action-rust/setup@v0.2.0
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('.ci/Cargo.cache.toml', 'rust-toolchain.toml', 'rust-toolchain') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.target }}-
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: ${{ matrix.target }}
+          system-packages: ${{ matrix.apt_packages }}
+
+      - name: Restore Cargo caches
+        id: cargo_cache
+        uses: pylab-me/esg-action-rust@v0.2.0
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.setup_rust.outputs.toolchain }}
+        with:
+          key-prefix: wg-friend
+          profile-name: release
+          toolchain: ${{ steps.setup_rust.outputs.toolchain }}
+          target-triple: ${{ steps.setup_rust.outputs.target }}
+          manifests: Cargo.toml
+          lockfiles: Cargo.lock
 
       - name: Build release binary
         env:
           CARGO_TERM_COLOR: always
           RUSTFLAGS: ${{ matrix.rustflags }}
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo +"${RUST_TOOLCHAIN}" build --release --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package
@@ -165,6 +154,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Save Cargo caches
+        if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v'))
+        uses: pylab-me/esg-action-rust/save@v0.2.0
+        with:
+          registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
+          target-key: ${{ steps.cargo_cache.outputs.target-key }}
+          registry-paths: ${{ steps.cargo_cache.outputs.registry-paths }}
+          manifests: Cargo.toml
+          save-registry: ${{ steps.cargo_cache.outputs.registry-cache-hit != 'true' }}
+          save-target: ${{ steps.cargo_cache.outputs.target-cache-hit != 'true' }}
+
   release:
     name: upload-release-assets
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
@@ -177,7 +177,7 @@ jobs:
     steps:
       - name: Checkout code
         if: needs.prepare.outputs.prerelease == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

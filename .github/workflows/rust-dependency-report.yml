@@ -1,0 +1,84 @@
+name: Rust Dependency Version Report
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron cannot express an exact 14-day interval.
+    # Trigger weekly; only run the check on alternating Mondays.
+    - cron: "13 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check two-week cadence
+        id: cadence
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # UTC Mondays, starting 2026-11-02, repeat every 14 days.
+          anchor=$(date -u -d "2026-11-02" +%s)
+          now=$(date -u +%s)
+          weeks=$(( (now - anchor) / 604800 ))
+          if (( weeks % 2 == 0 )); then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.cadence.outputs.run == 'true'
+        uses: actions/checkout@v7
+
+      - name: Install Rust nightly
+        if: steps.cadence.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Check dependency versions
+        if: steps.cadence.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -f Cargo.lock ]]; then
+            lock_state="present"
+          else
+            lock_state="absent"
+          fi
+
+          CARGO_TERM_COLOR=never cargo +nightly update --verbose 2>&1 | tee "$RUNNER_TEMP/cargo-update.log"
+
+          {
+            echo "## Rust dependency version report"
+            echo
+            echo "Command: \`cargo +nightly update --verbose\`"
+            echo
+            if [[ "$lock_state" == "absent" ]]; then
+              echo "No original Cargo.lock: this is a new dependency resolution, not a before/after upgrade comparison."
+            else
+              echo "Cargo.lock present: Cargo reports changes relative to the existing lockfile."
+            fi
+            echo
+            echo "### Updates and newer available versions reported by Cargo"
+            echo
+            echo '```text'
+            if ! awk '
+              /^[[:space:]]*(Updating|Unchanged|Adding|Downgrading)[[:space:]]/ &&
+                (/\(available: / || / -> /) { print; found = 1 }
+              END { if (!found) print "No updates or newer available versions reported by Cargo." }
+            ' "$RUNNER_TEMP/cargo-update.log"; then
+              echo "Unable to parse Cargo output."
+            fi
+            echo '```'
+            echo
+            echo "Note: \`(available: ...)\` reports alternatives; it does not guarantee compatibility with current Cargo.toml constraints."
+            echo "The complete Cargo output is available in this job's logs."
+          } >> "$GITHUB_STEP_SUMMARY"

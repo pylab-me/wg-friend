@@ -46,6 +46,8 @@ jobs:
   build:
     name: boringtun-${{ matrix.id }}
     runs-on: ${{ matrix.runs_on }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
     strategy:
       fail-fast: false
       matrix:
@@ -95,11 +97,23 @@ jobs:
 
     steps:
       - name: Checkout packaging repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
-      - name: Install Rust target for host build
+      - name: Set up Rust toolchain for host build
+        id: setup_rust
         if: matrix.build_mode == 'host'
-        run: rustup target add ${{ matrix.target }}
+        uses: pylab-me/esg-action-rust/setup@v0.2.0
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Resolve Docker Rust toolchain
+        id: docker_rust
+        if: matrix.build_mode == 'docker'
+        run: |
+          set -euo pipefail
+          version="$(docker run --rm '${{ matrix.docker_image }}' rustc --version)"
+          echo "toolchain=${{ matrix.docker_image }} ${version}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve source mode
         id: meta
@@ -125,21 +139,6 @@ jobs:
             echo "git_ref=${GIT_REF}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Cache Cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            stage/
-            target/
-            upstream/boringtun/target/
-          key: boringtun-${{ runner.os }}-${{ matrix.target }}-${{ matrix.build_mode }}-${{ matrix.docker_image }}-${{ steps.meta.outputs.source }}-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.git_ref }}
-          restore-keys: |
-            boringtun-${{ runner.os }}-${{ matrix.target }}-${{ matrix.build_mode }}-
-            boringtun-${{ runner.os }}-${{ matrix.target }}-
-
       - name: Checkout cloudflare/boringtun git tag/ref
         if: steps.meta.outputs.source == 'git'
         run: |
@@ -159,6 +158,22 @@ jobs:
           git checkout --detach FETCH_HEAD
           cd "${GITHUB_WORKSPACE}"
 
+      - name: Restore Cargo caches
+        id: cargo_cache
+        uses: pylab-me/esg-action-rust@v0.2.0
+        with:
+          key-prefix: wg-friend-boringtun
+          profile-name: release-${{ matrix.build_mode }}-${{ steps.meta.outputs.source }}-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.git_ref }}
+          toolchain: ${{ matrix.build_mode == 'host' && steps.setup_rust.outputs.toolchain || steps.docker_rust.outputs.toolchain }}
+          target-triple: ${{ matrix.target }}
+          manifests: |
+            Cargo.toml
+            upstream/boringtun/**/Cargo.toml
+          lockfiles: |
+            Cargo.lock
+            upstream/boringtun/**/Cargo.lock
+          target-paths: target/boringtun
+
       - name: Build from crates.io on host
         if: steps.meta.outputs.source == 'crates' && matrix.build_mode == 'host'
         env:
@@ -168,11 +183,12 @@ jobs:
           set -euo pipefail
 
           rm -rf stage dist-bin
-          cargo install boringtun-cli \
+          cargo +"${{ steps.setup_rust.outputs.toolchain }}" install boringtun-cli \
             --version "${{ steps.meta.outputs.version }}" \
             --locked \
             --target "${{ matrix.target }}" \
-            --root "${PWD}/stage"
+            --root "${PWD}/stage" \
+            --target-dir target/boringtun
 
           mkdir -p dist-bin
           cp "stage/bin/${BIN_NAME}${{ matrix.bin_ext }}" "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
@@ -188,11 +204,16 @@ jobs:
           rm -rf stage dist-bin
           mkdir -p stage dist-bin
 
+          CARGO_CACHE_HOME="${CARGO_HOME:-$HOME/.cargo}"
+          mkdir -p "${CARGO_CACHE_HOME}/registry" "${CARGO_CACHE_HOME}/git" target/boringtun
+
           docker run --rm \
             -e CARGO_TERM_COLOR=always \
             -e RUSTFLAGS="${RUSTFLAGS}" \
             -e CC_x86_64_unknown_linux_musl=cc \
             -v "${GITHUB_WORKSPACE}:/work" \
+            -v "${CARGO_CACHE_HOME}/registry:/usr/local/cargo/registry" \
+            -v "${CARGO_CACHE_HOME}/git:/usr/local/cargo/git" \
             -w /work \
             "${{ matrix.docker_image }}" \
             sh -lc 'set -euo pipefail
@@ -207,10 +228,12 @@ jobs:
                 --version "${{ steps.meta.outputs.version }}" \
                 --locked \
                 --target "${{ matrix.target }}" \
-                --root /work/stage
+                --root /work/stage \
+                --target-dir /work/target/boringtun
             '
 
-          sudo chown -R "$(id -u):$(id -g)" stage
+          sudo chown -R "$(id -u):$(id -g)" stage target/boringtun \
+            "${CARGO_CACHE_HOME}/registry" "${CARGO_CACHE_HOME}/git"
           cp "stage/bin/${BIN_NAME}${{ matrix.bin_ext }}" "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
 
       - name: Build from cloudflare/boringtun git tag/ref on host
@@ -222,15 +245,16 @@ jobs:
           set -euo pipefail
 
           rm -rf dist-bin
-          cargo build \
+          cargo +"${{ steps.setup_rust.outputs.toolchain }}" build \
             --manifest-path upstream/boringtun/Cargo.toml \
+            --target-dir target/boringtun \
             --bin boringtun-cli \
             --release \
             --locked \
             --target "${{ matrix.target }}"
 
           mkdir -p dist-bin
-          cp "upstream/boringtun/target/${{ matrix.target }}/release/${BIN_NAME}${{ matrix.bin_ext }}" \
+          cp "target/boringtun/${{ matrix.target }}/release/${BIN_NAME}${{ matrix.bin_ext }}" \
             "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
 
       - name: Build from cloudflare/boringtun git tag/ref in Docker
@@ -244,11 +268,16 @@ jobs:
           rm -rf dist-bin
           mkdir -p dist-bin
 
+          CARGO_CACHE_HOME="${CARGO_HOME:-$HOME/.cargo}"
+          mkdir -p "${CARGO_CACHE_HOME}/registry" "${CARGO_CACHE_HOME}/git" target/boringtun
+
           docker run --rm \
             -e CARGO_TERM_COLOR=always \
             -e RUSTFLAGS="${RUSTFLAGS}" \
             -e CC_x86_64_unknown_linux_musl=cc \
             -v "${GITHUB_WORKSPACE}:/work" \
+            -v "${CARGO_CACHE_HOME}/registry:/usr/local/cargo/registry" \
+            -v "${CARGO_CACHE_HOME}/git:/usr/local/cargo/git" \
             -w /work \
             "${{ matrix.docker_image }}" \
             sh -lc 'set -euo pipefail
@@ -261,14 +290,16 @@ jobs:
 
               cargo build \
                 --manifest-path upstream/boringtun/Cargo.toml \
+                --target-dir /work/target/boringtun \
                 --bin boringtun-cli \
                 --release \
                 --locked \
                 --target "${{ matrix.target }}"
             '
 
-          sudo chown -R "$(id -u):$(id -g)" upstream
-          cp "upstream/boringtun/target/${{ matrix.target }}/release/${BIN_NAME}${{ matrix.bin_ext }}" \
+          sudo chown -R "$(id -u):$(id -g)" upstream target/boringtun \
+            "${CARGO_CACHE_HOME}/registry" "${CARGO_CACHE_HOME}/git"
+          cp "target/boringtun/${{ matrix.target }}/release/${BIN_NAME}${{ matrix.bin_ext }}" \
             "dist-bin/${BIN_NAME}${{ matrix.bin_ext }}"
 
       - name: Smoke check binary
@@ -329,6 +360,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Save Cargo caches
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v')
+        uses: pylab-me/esg-action-rust/save@v0.2.0
+        with:
+          registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
+          target-key: ${{ steps.cargo_cache.outputs.target-key }}
+          registry-paths: ${{ steps.cargo_cache.outputs.registry-paths }}
+          target-paths: target/boringtun
+          # BoringTun is upstream code; keep its compiled products for reuse.
+          prune: 'false'
+          save-registry: ${{ steps.cargo_cache.outputs.registry-cache-hit != 'true' }}
+          save-target: ${{ steps.cargo_cache.outputs.target-cache-hit != 'true' }}
+
   release:
     name: release-boringtun-assets
     needs: build
@@ -338,7 +382,7 @@ jobs:
 
     steps:
       - name: Checkout packaging repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
